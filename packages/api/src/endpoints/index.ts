@@ -5,5 +5,6 @@ export * from './custom';
 export * from './google';
 export * from './models';
 export * from './openai';
+export * from './polza';
 export * from './pricing';
 export * from './tokenConfig';

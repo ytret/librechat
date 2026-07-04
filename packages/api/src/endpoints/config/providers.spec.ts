@@ -124,6 +124,23 @@ describe('getProviderConfig', () => {
     expect(result.customEndpointConfig?.name).toBe('My-LLM');
   });
 
+  it('routes an explicit Polza custom endpoint through the Polza initializer', () => {
+    const appConfig = buildAppConfig([
+      {
+        name: 'Polza',
+        baseURL: 'https://polza.ai/api/v1',
+        apiKey: 'sk-test',
+        provider: 'polza',
+      },
+    ]);
+
+    const result = getProviderConfig({ provider: 'Polza', appConfig });
+
+    expect(result.overrideProvider).toBe(Providers.OPENAI);
+    expect(result.getOptions).toBe(providerConfigMap.polza);
+    expect(result.customEndpointConfig?.provider).toBe('polza');
+  });
+
   it('applies provider:anthropic even when the endpoint name collides with a known custom provider', () => {
     // `openrouter` resolves via `providerConfigMap` first (skipping the generic
     // custom branch); the override must still be re-applied from the config so

@@ -40,6 +40,7 @@ export enum Providers {
   DEEPSEEK = 'deepseek',
   MOONSHOT = 'moonshot',
   OPENROUTER = 'openrouter',
+  POLZA = 'polza',
   XAI = 'xai',
 }
 
@@ -60,6 +61,7 @@ export const documentSupportedProviders = new Set<string>([
   Providers.DEEPSEEK,
   Providers.MOONSHOT,
   Providers.OPENROUTER,
+  Providers.POLZA,
   Providers.XAI,
 ]);
 
@@ -72,6 +74,7 @@ const openAILikeProviders = new Set<string>([
   Providers.DEEPSEEK,
   Providers.MOONSHOT,
   Providers.OPENROUTER,
+  Providers.POLZA,
   Providers.XAI,
 ]);
 
@@ -99,6 +102,7 @@ export const cacheSubsetProviders = new Set<string>([
   Providers.DEEPSEEK,
   Providers.OPENROUTER,
   Providers.MOONSHOT,
+  Providers.POLZA,
   Providers.ANTHROPIC,
 ]);
 
