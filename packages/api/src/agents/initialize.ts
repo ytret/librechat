@@ -1003,6 +1003,13 @@ export async function initializeAgent(
     model: agent.model,
   };
 
+  if (
+    customEndpointConfig?.provider === 'polza' &&
+    (agent.tools ?? []).includes(Tools.web_search)
+  ) {
+    finalModelOptions.web_search = true;
+  }
+
   const options: InitializeResultBase = await getOptions({
     req,
     endpoint: provider,
