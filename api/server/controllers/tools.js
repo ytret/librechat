@@ -40,6 +40,18 @@ const verifyWebSearchAuth = async (req, res) => {
     const userId = req.user.id;
     /** @type {TCustomConfig['webSearch']} */
     const webSearchConfig = appConfig?.webSearch || {};
+
+    const customEndpoints = appConfig?.endpoints?.custom;
+    const hasPolzaEndpoint = Array.isArray(customEndpoints) &&
+      customEndpoints.some((ep) => ep?.provider === 'polza');
+
+    if (hasPolzaEndpoint) {
+      return res.status(200).json({
+        authenticated: true,
+        authTypes: [['providers', 'system_defined'], ['scrapers', 'system_defined'], ['rerankers', 'system_defined']],
+      });
+    }
+
     const result = await loadWebSearchAuth({
       userId,
       loadAuthValues,

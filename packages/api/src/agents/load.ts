@@ -71,7 +71,17 @@ export async function loadEphemeralAgent(
     tools.push(Tools.file_search);
   }
   if (ephemeralAgent?.web_search === true || modelSpec?.webSearch === true) {
-    tools.push(Tools.web_search);
+    let epConfig: Record<string, unknown> | undefined;
+    if (!isAgentsEndpoint(endpoint)) {
+      try {
+        epConfig = getCustomEndpointConfig({ endpoint, appConfig: req.config }) as Record<string, unknown> | undefined;
+      } catch { /* ignore */ }
+    }
+    if (epConfig?.provider === 'polza') {
+      (model_parameters as Record<string, unknown>).web_search = true;
+    } else {
+      tools.push(Tools.web_search);
+    }
   }
   if (ephemeralAgent?.memory === true || modelSpec?.memory === true) {
     tools.push(Tools.memory);
