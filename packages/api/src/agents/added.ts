@@ -171,21 +171,6 @@ export async function loadAddedAgent(
     }
   }
 
-  let endpointConfig = (appConfig?.endpoints as Record<string, unknown> | undefined)?.[endpoint] as
-    | Record<string, unknown>
-    | undefined;
-  if (!isAgentsEndpoint(endpoint) && !endpointConfig) {
-    try {
-      endpointConfig = getCustomEndpointConfig({ endpoint, appConfig }) as
-        | Record<string, unknown>
-        | undefined;
-    } catch (err) {
-      logger.error('[loadAddedAgent] Error getting custom endpoint config', err);
-    }
-  }
-
-  const isPolza = endpointConfig?.provider === 'polza';
-
   const tools: string[] = [];
   if (ephemeralAgent?.execute_code === true || modelSpec?.executeCode === true) {
     tools.push(Tools.execute_code);
@@ -194,9 +179,7 @@ export async function loadAddedAgent(
     tools.push(Tools.file_search);
   }
   if (ephemeralAgent?.web_search === true || modelSpec?.webSearch === true) {
-    if (!isPolza) {
-      tools.push(Tools.web_search);
-    }
+    tools.push(Tools.web_search);
   }
   if (ephemeralAgent?.memory === true || modelSpec?.memory === true) {
     tools.push(Tools.memory);
@@ -241,8 +224,17 @@ export async function loadAddedAgent(
     }
   }
 
-  if (isPolza && (ephemeralAgent?.web_search === true || modelSpec?.webSearch === true)) {
-    model_parameters.web_search = true;
+  let endpointConfig = (appConfig?.endpoints as Record<string, unknown> | undefined)?.[endpoint] as
+    | Record<string, unknown>
+    | undefined;
+  if (!isAgentsEndpoint(endpoint) && !endpointConfig) {
+    try {
+      endpointConfig = getCustomEndpointConfig({ endpoint, appConfig }) as
+        | Record<string, unknown>
+        | undefined;
+    } catch (err) {
+      logger.error('[loadAddedAgent] Error getting custom endpoint config', err);
+    }
   }
 
   const sender =
