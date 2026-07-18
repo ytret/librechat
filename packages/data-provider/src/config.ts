@@ -3,7 +3,6 @@ import type { ZodError } from 'zod';
 import type { TEndpointsConfig, TModelsConfig, TConfig } from './types';
 import {
   EModelEndpoint,
-  Providers,
   eModelEndpointSchema,
   isAgentsEndpoint,
   eReasoningParameterFormatSchema,
@@ -934,11 +933,13 @@ export const endpointSchema = baseEndpointSchema.merge(
     iconURL: z.string().optional(),
     modelDisplayLabel: z.string().optional(),
     /**
-     * Forces the endpoint to use a provider-specific request layer. `anthropic`
-     * uses the native `/v1/messages` client; `polza` keeps the OpenAI-compatible
-     * client and applies Polza request transforms.
+     * Forces the endpoint to use a provider's native client / request format
+     * instead of the default OpenAI-compatible client. Currently supports
+     * `anthropic`, for endpoints that speak the Anthropic `/v1/messages` API
+     * (Anthropic itself or Anthropic-compatible gateways). Omit for
+     * OpenAI-compatible endpoints.
      */
-    provider: z.union([z.literal(EModelEndpoint.anthropic), z.literal(Providers.POLZA)]).optional(),
+    provider: z.literal(EModelEndpoint.anthropic).optional(),
     headers: z.record(z.string()).optional(),
     addParams: addParamsSchema.optional(),
     dropParams: z.array(z.string()).optional(),

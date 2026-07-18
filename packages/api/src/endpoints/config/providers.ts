@@ -8,10 +8,7 @@ import { initializeBedrock } from '../bedrock/initialize';
 import { initializeCustom } from '../custom/initialize';
 import { initializeGoogle } from '../google/initialize';
 import { initializeOpenAI } from '../openai/initialize';
-import { initializePolza } from '../polza/initialize';
 import { getCustomEndpointConfig } from '~/app/config';
-
-const POLZA_PROVIDER = 'polza';
 
 /**
  * Type for initialize functions
@@ -24,13 +21,9 @@ export type InitializeFn = (params: BaseInitializeParams) => Promise<InitializeR
  * @returns True if the provider is a known custom provider, false otherwise
  */
 export function isKnownCustomProvider(provider?: string): boolean {
-  return [
-    Providers.XAI,
-    Providers.DEEPSEEK,
-    Providers.OPENROUTER,
-    Providers.MOONSHOT,
-    POLZA_PROVIDER,
-  ].includes((provider?.toLowerCase() ?? '') as Providers);
+  return [Providers.XAI, Providers.DEEPSEEK, Providers.OPENROUTER, Providers.MOONSHOT].includes(
+    (provider?.toLowerCase() ?? '') as Providers,
+  );
 }
 
 /**
@@ -48,7 +41,6 @@ export const providerConfigMap: Record<string, InitializeFn> = {
   [Providers.DEEPSEEK]: initializeCustom,
   [Providers.MOONSHOT]: initializeCustom,
   [Providers.OPENROUTER]: initializeCustom,
-  [POLZA_PROVIDER]: initializePolza,
   [Providers.VERTEXAI]: initializeGoogle,
   [EModelEndpoint.openAI]: initializeOpenAI,
   [EModelEndpoint.google]: initializeGoogle,
@@ -216,8 +208,6 @@ export function getProviderConfig({
    */
   if (customEndpointConfig?.provider === EModelEndpoint.anthropic) {
     overrideProvider = Providers.ANTHROPIC;
-  } else if (customEndpointConfig?.provider === POLZA_PROVIDER) {
-    overrideProvider = Providers.OPENAI;
   }
 
   return {

@@ -1,9 +1,4 @@
-import {
-  Providers,
-  EModelEndpoint,
-  extractEnvVariable,
-  normalizeEndpointName,
-} from 'librechat-data-provider';
+import { EModelEndpoint, extractEnvVariable, normalizeEndpointName } from 'librechat-data-provider';
 import type { TCustomEndpoints, TEndpoint } from 'librechat-data-provider';
 import type { TCustomEndpointsConfig } from '~/types/endpoints';
 import { isUserProvided } from '~/utils';
@@ -49,16 +44,16 @@ export function loadCustomEndpointsConfig(
       const userProvideURL = isUserProvided(resolvedBaseURL);
 
       /**
-       * A provider can imply its parameter set. Native Anthropic uses Anthropic
-       * fields; Polza stays on OpenAI-compatible fields unless an admin overrides it.
+       * A native `provider` (e.g. anthropic) implies its parameter set. Surface it
+       * as `defaultParamsEndpoint` so the client param panel shows the right fields
+       * (e.g. `maxOutputTokens`/`thinking` for Anthropic, not OpenAI `max_tokens`),
+       * unless an admin explicitly chose a non-default `defaultParamsEndpoint`.
        */
-      const defaultParamsEndpoint =
-        provider === Providers.POLZA ? EModelEndpoint.openAI : provider;
       const resolvedCustomParams =
-        defaultParamsEndpoint != null &&
+        provider != null &&
         (customParams?.defaultParamsEndpoint == null ||
           customParams.defaultParamsEndpoint === EModelEndpoint.custom)
-          ? { ...customParams, defaultParamsEndpoint }
+          ? { ...customParams, defaultParamsEndpoint: provider }
           : customParams;
 
       customEndpointsConfig[name] = {

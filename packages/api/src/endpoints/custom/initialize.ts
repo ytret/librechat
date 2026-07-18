@@ -18,7 +18,6 @@ import { getLLMConfig as getAnthropicLLMConfig } from '~/endpoints/anthropic/llm
 import { extractDefaultParams } from '~/endpoints/openai/llm';
 import { isUserProvided, checkUserKeyExpiry } from '~/utils';
 import { getOpenAIConfig } from '~/endpoints/openai/config';
-import { applyPolzaRequestTransforms, isPolzaEndpoint } from '~/endpoints/polza/transform';
 import { getScopedTokenConfigKey } from '~/endpoints/keys';
 import { getCustomEndpointConfig } from '~/app/config';
 import { fetchModels } from '~/endpoints/models';
@@ -339,13 +338,6 @@ export async function initializeCustom({
       ...clientOptions,
     };
     options = getOpenAIConfig(apiKey, finalClientOptions, endpoint);
-    if (isPolzaEndpoint(endpointConfig, baseURL)) {
-      options = applyPolzaRequestTransforms({
-        options,
-        endpointConfig,
-        modelOptions,
-      });
-    }
     if (options != null) {
       options.useLegacyContent = true;
       options.endpointTokenConfig = endpointTokenConfig;
