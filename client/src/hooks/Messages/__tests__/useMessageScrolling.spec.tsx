@@ -287,4 +287,50 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(scrollable.scrollTop).toBe(700);
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
+
+  it('does not follow a resize when the content shrinks (e.g. final message swap at completion)', () => {
+    renderScrolling();
+
+    const content = screen.getByTestId('content');
+    const observer = MockResizeObserver.last();
+
+    Object.defineProperty(content, 'clientHeight', { value: 500, configurable: true });
+    act(() => {
+      observer?.trigger();
+    });
+    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(content, 'clientHeight', { value: 400, configurable: true });
+    act(() => {
+      observer?.trigger();
+    });
+
+    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow resizes after generation completes even if content still resizes', () => {
+    const { rerender } = renderScrolling({ contextOverrides: { isSubmitting: true } });
+
+    const content = screen.getByTestId('content');
+    Object.defineProperty(content, 'clientHeight', { value: 500, configurable: true });
+    act(() => {
+      MockResizeObserver.last()?.trigger();
+    });
+    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <RecoilRoot>
+        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+          <ScrollingHarness />
+        </MessagesViewContext.Provider>
+      </RecoilRoot>,
+    );
+
+    Object.defineProperty(content, 'clientHeight', { value: 600, configurable: true });
+    act(() => {
+      MockResizeObserver.last()?.trigger();
+    });
+
+    expect(mockScrollToBottom).toHaveBeenCalledTimes(1);
+  });
 });

@@ -19,9 +19,15 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
   const suppressNextResizeFollowRef = useRef(false);
+  const prevContentHeightRef = useRef<number>(Number.NEGATIVE_INFINITY);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const { conversation, conversationId } = useMessagesConversation();
   const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
+
+  const isSubmittingRef = useRef(isSubmitting);
+  isSubmittingRef.current = isSubmitting;
+  const abortScrollRef = useRef(abortScroll);
+  abortScrollRef.current = abortScroll;
 
   const timeoutIdRef = useRef<NodeJS.Timeout>();
 
@@ -110,6 +116,11 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
 
   const reconcileContentResize = useCallback(
     (shouldFollowResize = true) => {
+      const contentEl = contentRef.current;
+      const currentHeight = contentEl?.clientHeight ?? 0;
+      const grew = currentHeight > prevContentHeightRef.current;
+      prevContentHeightRef.current = currentHeight;
+
       if (clampScrollToContent()) {
         return;
       }
@@ -120,11 +131,17 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
         return;
       }
 
-      if (shouldFollowResize && isSubmitting && abortScroll !== true && isNearBottomRef.current) {
+      if (
+        shouldFollowResize &&
+        grew &&
+        isSubmittingRef.current &&
+        abortScrollRef.current !== true &&
+        isNearBottomRef.current
+      ) {
         scrollToBottom?.();
       }
     },
-    [abortScroll, clampScrollToContent, getIsNearBottom, isSubmitting, scrollToBottom],
+    [clampScrollToContent, getIsNearBottom, scrollToBottom],
   );
 
   useEffect(() => {
