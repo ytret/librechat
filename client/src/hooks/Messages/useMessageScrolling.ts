@@ -19,11 +19,12 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
   const suppressNextResizeFollowRef = useRef(false);
-  const prevContentHeightRef = useRef<number>(Number.NEGATIVE_INFINITY);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const { conversation, conversationId } = useMessagesConversation();
   const { setAbortScroll, isSubmitting, abortScroll } = useMessagesSubmission();
 
+  // Read submission state at callback time so the persistent ResizeObserver never
+  // acts on a stale isSubmitting/abortScroll value captured during streaming.
   const isSubmittingRef = useRef(isSubmitting);
   isSubmittingRef.current = isSubmitting;
   const abortScrollRef = useRef(abortScroll);
@@ -116,11 +117,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
 
   const reconcileContentResize = useCallback(
     (shouldFollowResize = true) => {
-      const contentEl = contentRef.current;
-      const currentHeight = contentEl?.clientHeight ?? 0;
-      const grew = currentHeight > prevContentHeightRef.current;
-      prevContentHeightRef.current = currentHeight;
-
       if (clampScrollToContent()) {
         return;
       }
@@ -133,7 +129,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
 
       if (
         shouldFollowResize &&
-        grew &&
         isSubmittingRef.current &&
         abortScrollRef.current !== true &&
         isNearBottomRef.current
