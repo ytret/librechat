@@ -32,6 +32,7 @@ export * from './configHtml';
 export * from './downloadFile';
 export * from './scaleImage';
 export * from './timestamps';
+export * from './thinkDuration';
 export * from './localStorage';
 export * from './promptGroups';
 export * from './previewCache';

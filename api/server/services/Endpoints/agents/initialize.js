@@ -25,10 +25,8 @@ const {
   MAX_SUBAGENT_GRAPH_NODES,
   isEphemeralAgentId,
 } = require('librechat-data-provider');
-const {
-  createToolEndCallback,
-  getDefaultHandlers,
-} = require('~/server/controllers/agents/callbacks');
+const { createToolEndCallback, getDefaultHandlers } = require('~/server/controllers/agents/callbacks');
+const { createThinkTiming } = require('./thinkTiming');
 const { loadAgentTools, loadToolsForExecution } = require('~/server/services/ToolService');
 const { filterFilesByAgentAccess } = require('~/server/services/Files/permissions');
 const {
@@ -132,6 +130,8 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
   /** @type {ArtifactPromises} */
   const artifactPromises = [];
   const { contentParts, aggregateContent } = createContentAggregator();
+  const thinkTiming = createThinkTiming(contentParts);
+  const timedAggregateContent = thinkTiming.wrap(aggregateContent);
   const toolEndCallback = createToolEndCallback({ req, res, artifactPromises, streamId });
 
   /** Query accessible skill IDs once per run (shared across all agents).
@@ -265,7 +265,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     res,
     toolExecuteOptions,
     summarizationOptions,
-    aggregateContent,
+    aggregateContent: timedAggregateContent,
     toolEndCallback,
     collectedUsage,
     collectedThoughtSignatures,
@@ -939,6 +939,7 @@ const initializeClient = async ({ req, res, signal, endpointOption }) => {
     aggregateContent,
     artifactPromises,
     primeInvokedSkills: handlePrimeInvokedSkills,
+    thinkTiming,
     agent: primaryConfig,
     spec: endpointOption.spec,
     iconURL: endpointOption.iconURL,

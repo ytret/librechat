@@ -571,7 +571,16 @@ export type TMessageContentParts =
       text?: string | TextData;
       error?: string;
     } & ContentMetadata)
-  | ({ type: ContentTypes.THINK; think?: string | TextData } & ContentMetadata)
+  | ({
+      type: ContentTypes.THINK;
+      think?: string | TextData;
+      /** Wall-clock duration (ms) the model spent producing this thinking part,
+       *  measured backend-side. Persisted so it survives a page reload. */
+      thinkDuration?: number;
+      /** Client-side epoch (ms) marking when streaming of this part began.
+       *  Live-session only; not persisted. */
+      thinkStartedAt?: number;
+    } & ContentMetadata)
   | ({
       type: ContentTypes.TEXT;
       text?: string | TextData;

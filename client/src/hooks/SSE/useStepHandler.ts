@@ -58,7 +58,12 @@ type TStepEvent =
 
 type MessageDeltaUpdate = { type: ContentTypes.TEXT; text: string; tool_call_ids?: string[] };
 
-type ReasoningDeltaUpdate = { type: ContentTypes.THINK; think: string };
+type ReasoningDeltaUpdate = {
+  type: ContentTypes.THINK;
+  think: string;
+  thinkStartedAt?: number;
+  thinkDuration?: number;
+};
 
 type AllContentTypes =
   | ContentTypes.TEXT
@@ -391,6 +396,22 @@ export default function useStepHandler({
         type: ContentTypes.THINK,
         think: (currentContent.think || '') + contentPart.think,
       };
+
+      /** Preserve the client-side `thinkStartedAt` epoch so the live ticking
+       *  header keeps counting from the first delta of this part. */
+      if (currentContent.thinkStartedAt != null) {
+        update.thinkStartedAt = currentContent.thinkStartedAt;
+      } else {
+        update.thinkStartedAt = Date.now();
+      }
+
+      /** Preserve the backend-computed duration when a final update carries it. */
+      const incomingDuration = (contentPart as { thinkDuration?: number }).thinkDuration;
+      if (incomingDuration != null) {
+        update.thinkDuration = incomingDuration;
+      } else if (currentContent.thinkDuration != null) {
+        update.thinkDuration = currentContent.thinkDuration;
+      }
 
       updatedContent[index] = update;
     } else if (contentType === ContentTypes.IMAGE_URL && 'image_url' in contentPart) {

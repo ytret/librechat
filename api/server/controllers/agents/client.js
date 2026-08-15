@@ -119,11 +119,16 @@ class AgentClient extends BaseClient {
       subagentAggregatorsByToolCallId,
       contextUsageSink,
       usageEmitSink,
+      thinkTiming,
       ...clientOptions
     } = options;
 
     this.agentConfigs = agentConfigs;
     this.maxContextTokens = maxContextTokens;
+    /** Per-part wall-clock thinking-duration tracker (finalizes open THINK
+     *  parts at run end so their `thinkDuration` is stamped before save).
+     *  @type {{ finalize: () => void } | undefined} */
+    this.thinkTiming = thinkTiming;
     /** Latest visible context snapshot for this response, captured live by the
      *  ON_CONTEXT_USAGE handler; persisted on `metadata.contextUsage`.
      *  @type {{ latest: import('librechat-data-provider').TContextUsageEvent | null } | undefined} */
@@ -1518,6 +1523,7 @@ class AgentClient extends BaseClient {
       }
 
       this.finalizeSubagentContent();
+      this.thinkTiming?.finalize();
 
       /** Flush subagent usage emits the sink fired without awaiting, so their
        *  persist/publish completes before we return and the job is cleaned up

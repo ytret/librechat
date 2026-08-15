@@ -1,4 +1,4 @@
-import { memo, useMemo, useState, useCallback, useRef, useId } from 'react';
+import { memo, useMemo, useState, useEffect, useCallback, useRef, useId } from 'react';
 import { useAtomValue } from 'jotai';
 import { ContentTypes } from 'librechat-data-provider';
 import type { MouseEvent, FocusEvent } from 'react';
@@ -6,11 +6,15 @@ import { ThinkingContent, ThinkingButton, FloatingThinkingBar } from './Thinking
 import { useLocalize, useExpandCollapse } from '~/hooks';
 import { showThinkingAtom } from '~/store/showThinking';
 import { useMessageContext } from '~/Providers';
-import { cn } from '~/utils';
+import { cn, formatThinkDuration } from '~/utils';
 
 type ReasoningProps = {
   reasoning: string;
   isLast: boolean;
+  /** Backend-computed wall-clock duration (ms) once the part is finalized. */
+  thinkDuration?: number;
+  /** Client-side epoch (ms) marking when streaming of this part began. */
+  thinkStartedAt?: number;
 };
 
 /**
@@ -35,7 +39,7 @@ type ReasoningProps = {
  *
  * For legacy text-based messages, see Thinking.tsx component.
  */
-const Reasoning = memo(({ reasoning, isLast }: ReasoningProps) => {
+const Reasoning = memo(({ reasoning, isLast, thinkDuration, thinkStartedAt }: ReasoningProps) => {
   const contentId = useId();
   const localize = useLocalize();
   const showThinking = useAtomValue(showThinkingAtom);
@@ -80,11 +84,40 @@ const Reasoning = memo(({ reasoning, isLast }: ReasoningProps) => {
 
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
 
-  const label = useMemo(
-    () =>
-      effectiveIsSubmitting && isLast ? localize('com_ui_thinking') : localize('com_ui_thoughts'),
-    [effectiveIsSubmitting, localize, isLast],
+  /** Whether this part is the currently-open thinking part still streaming. */
+  const isLiveThinking = effectiveIsSubmitting && isLast && thinkDuration == null;
+  /** Live ticking is only possible when we know when the part started. */
+  const canTick = isLiveThinking && thinkStartedAt != null;
+
+  /** Live ticking elapsed time (ms) while the part streams. */
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!canTick || thinkStartedAt == null) {
+      return;
+    }
+    const update = () => setElapsedMs(Math.max(0, Date.now() - thinkStartedAt));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [canTick, thinkStartedAt]);
+
+  /** The duration to display, in ms — backend value once finalized, otherwise live. */
+  const displayedDurationMs = thinkDuration ?? (canTick ? elapsedMs : undefined);
+  const formattedDuration = useMemo(
+    () => (displayedDurationMs != null ? formatThinkDuration(displayedDurationMs) : null),
+    [displayedDurationMs],
   );
+
+  const label = useMemo(() => {
+    if (isLiveThinking) {
+      return formattedDuration
+        ? localize('com_ui_thinking_duration', { duration: formattedDuration })
+        : localize('com_ui_thinking');
+    }
+    return formattedDuration
+      ? localize('com_ui_thought_duration', { duration: formattedDuration })
+      : localize('com_ui_thoughts');
+  }, [isLiveThinking, formattedDuration, localize]);
 
   if (!reasoningText) {
     return null;

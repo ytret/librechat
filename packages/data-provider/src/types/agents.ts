@@ -12,6 +12,10 @@ export namespace Agents {
   export type ReasoningContentText = {
     type: ContentTypes.THINK;
     think: string;
+    /** Wall-clock duration (ms) the model spent producing this thinking part,
+     *  measured backend-side from the first to the last `on_reasoning_delta`.
+     *  Persisted so it survives a page reload. */
+    thinkDuration?: number;
   };
 
   export type MessageContentText = {
@@ -327,7 +331,15 @@ export namespace Agents {
     content?: MessageContentComplex[];
   }
 
-  export type ReasoningDeltaUpdate = { type: ContentTypes.THINK; think: string };
+  export type ReasoningDeltaUpdate = {
+    type: ContentTypes.THINK;
+    think: string;
+    /** Client-side epoch (ms) marking when this thinking part first started
+     *  streaming, used to drive the live ticking header. Not persisted. */
+    thinkStartedAt?: number;
+    /** Backend-computed wall-clock duration (ms) once the part is finalized. */
+    thinkDuration?: number;
+  };
   export type ContentType =
     | ContentTypes.THINK
     | ContentTypes.TEXT
