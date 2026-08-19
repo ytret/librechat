@@ -16,6 +16,10 @@ export namespace Agents {
      *  measured backend-side from the first to the last `on_reasoning_delta`.
      *  Persisted so it survives a page reload. */
     thinkDuration?: number;
+    /** Epoch (ms) of the first `on_reasoning_delta` for this part, stamped
+     *  backend-side so a client that switched sessions mid-thought can keep
+     *  ticking from the original start time via the resume state. */
+    thinkStartedAt?: number;
   };
 
   export type MessageContentText = {

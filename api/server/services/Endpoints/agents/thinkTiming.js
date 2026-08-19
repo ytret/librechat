@@ -13,6 +13,11 @@ const { ContentTypes } = require('librechat-data-provider');
  * the part itself, so it rides through `saveMessage` into Mongo and survives a
  * page reload.
  *
+ * We also stamp `thinkStartedAt` (epoch ms of the first reasoning delta) onto
+ * the open part so a client that navigates away and back mid-thought can keep
+ * ticking from the original start time via `resumeState.aggregatedContent`
+ * instead of restarting the counter from zero.
+ *
  * @param {Array<import('librechat-data-provider').TMessageContentParts>} contentParts
  *   The live aggregator array (shared reference with `AgentClient`).
  * @returns {{
@@ -78,6 +83,15 @@ function createThinkTiming(contentParts) {
         firstSeen = t;
       }
       lastSeen = t;
+      /** The aggregator replaces the THINK part object on every delta, so
+       *  re-stamp `thinkStartedAt` onto the fresh object each time. This
+       *  persists to Mongo and rides through `resumeState.aggregatedContent`
+       *  so a client that switched sessions mid-thought can keep ticking from
+       *  the original start time instead of resetting to zero. */
+      const part = contentParts[idx];
+      if (part && part.type === ContentTypes.THINK) {
+        part.thinkStartedAt = firstSeen;
+      }
       return;
     }
 
