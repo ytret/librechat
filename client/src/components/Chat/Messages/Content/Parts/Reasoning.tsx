@@ -84,25 +84,42 @@ const Reasoning = memo(({ reasoning, isLast, thinkDuration, thinkStartedAt }: Re
 
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
 
-  /** Whether this part is the currently-open thinking part still streaming. */
-  const isLiveThinking = effectiveIsSubmitting && isLast && thinkDuration == null;
-  /** Live ticking is only possible when we know when the part started. */
+  /** The THINK part is still streaming while the whole message is being generated
+   *  and the backend has not yet stamped a final `thinkDuration`. */
+  const isStreaming = effectiveIsSubmitting && thinkDuration == null;
+
+  /** Whether this is the currently-open thinking part (no later content yet). */
+  const isLiveThinking = isStreaming && isLast;
+
+  /** Live ticking only applies while this part is the open one still streaming. */
   const canTick = isLiveThinking && thinkStartedAt != null;
 
-  /** Live ticking elapsed time (ms) while the part streams. */
+  /** Live ticking elapsed time (ms) since this part started. */
   const [elapsedMs, setElapsedMs] = useState(0);
   useEffect(() => {
-    if (!canTick || thinkStartedAt == null) {
+    if (thinkStartedAt == null) {
       return;
     }
     const update = () => setElapsedMs(Math.max(0, Date.now() - thinkStartedAt));
+    /** Always seed the elapsed value so a part that mounts after its own
+     *  streaming window (e.g. resuming mid-text) still shows a duration. */
     update();
+    if (!canTick) {
+      return;
+    }
     const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [canTick, thinkStartedAt]);
 
-  /** The duration to display, in ms — backend value once finalized, otherwise live. */
-  const displayedDurationMs = thinkDuration ?? (canTick ? elapsedMs : undefined);
+  /** The duration to display, in ms — backend value once finalized, otherwise the
+   *  live ticking value while the message is still streaming. We keep showing the
+   *  last ticked value once reasoning ends but text is still streaming, so the
+   *  header flips to "Thought for …" immediately instead of regressing to a bare
+   *  "Thoughts" until the whole response finishes. Gated on `isStreaming` so a
+   *  persisted message with `thinkStartedAt` but no `thinkDuration` (a partial save
+   *  from navigating away mid-thought) doesn't show a stale wall-clock duration. */
+  const displayedDurationMs =
+    thinkDuration ?? (isStreaming && thinkStartedAt != null ? elapsedMs : undefined);
   const formattedDuration = useMemo(
     () => (displayedDurationMs != null ? formatThinkDuration(displayedDurationMs) : null),
     [displayedDurationMs],
