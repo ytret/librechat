@@ -288,24 +288,17 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
-  it('does not follow message tree changes after the user scrolls away (scrollbar only)', () => {
+  it('follows message tree changes while streaming', () => {
     const { rerender } = renderScrolling({
       contextOverrides: { isSubmitting: true },
       messagesTree: [message],
     });
 
     // The mount effect follows the initial tree; clear it so we only assert on the
-    // post-scroll re-render.
+    // post-update re-render.
     mockScrollToBottom.mockClear();
 
-    const scrollable = screen.getByTestId('scrollable');
-    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
-    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
-    scrollable.scrollTop = 100;
-
-    fireEvent.scroll(scrollable);
-
-    // A new streaming token produces a new tree; without the guard this would scroll back down.
+    // A new streaming token produces a new tree; the view should follow it to the bottom.
     rerender(
       <RecoilRoot>
         <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
@@ -316,7 +309,47 @@ describe('useMessageScrolling resize reconciliation', () => {
       </RecoilRoot>,
     );
 
+    expect(mockScrollToBottom).toHaveBeenCalled();
+  });
+
+  it('does not follow message tree changes when auto-scroll is aborted', () => {
+    const { rerender } = renderScrolling({
+      contextOverrides: { isSubmitting: true, abortScroll: true },
+      messagesTree: [message],
+    });
+
+    mockScrollToBottom.mockClear();
+
+    rerender(
+      <RecoilRoot>
+        <MessagesViewContext.Provider
+          value={createContextValue({ isSubmitting: true, abortScroll: true })}
+        >
+          <ScrollingHarness
+            messagesTree={[...[message], { ...message, messageId: 'message-2' }]}
+          />
+        </MessagesViewContext.Provider>
+      </RecoilRoot>,
+    );
+
     expect(mockScrollToBottom).not.toHaveBeenCalled();
+  });
+
+  it('marks auto-scroll as aborted when the user scrolls away via the scroll container', () => {
+    const setAbortScroll = jest.fn();
+    renderScrolling({
+      contextOverrides: { isSubmitting: true, setAbortScroll },
+      messagesTree: [message],
+    });
+
+    const scrollable = screen.getByTestId('scrollable');
+    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+    scrollable.scrollTop = 100;
+
+    fireEvent.scroll(scrollable);
+
+    expect(setAbortScroll).toHaveBeenCalledWith(true);
   });
 
   it('does not follow resizes after generation completes even if content still resizes', () => {

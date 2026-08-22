@@ -89,6 +89,15 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
     if (!isNearBottomRef.current) {
       // Drop any pending trailing scroll so a scroll-away isn't overridden by it.
       scrollToBottom?.cancel();
+      // Scrollbar drags, keyboard scrolling, and MessageNav jumps don't pass through the
+      // wheel/touch handlers that set abortScroll, so mark the follow as aborted here so
+      // the stream stops pulling the view back down.
+      if (isSubmittingRef.current) {
+        setAbortScroll(true);
+      }
+    } else if (isSubmittingRef.current && abortScrollRef.current) {
+      // The user scrolled back to the bottom mid-stream: resume following.
+      setAbortScroll(false);
     }
     if (messagesEndRef.current && scrollableRef.current) {
       const observer = new IntersectionObserver(
@@ -101,7 +110,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       observer.observe(messagesEndRef.current);
       return () => observer.disconnect();
     }
-  }, [debouncedSetShowScrollButton, getIsNearBottom, scrollToBottom]);
+  }, [debouncedSetShowScrollButton, getIsNearBottom, scrollToBottom, setAbortScroll]);
 
   const clampScrollToContent = useCallback(() => {
     const scrollEl = scrollableRef.current;
@@ -181,12 +190,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       return;
     }
 
-    if (
-      isSubmitting &&
-      scrollToBottom &&
-      abortScroll !== true &&
-      isNearBottomRef.current
-    ) {
+    if (isSubmitting && scrollToBottom && abortScroll !== true) {
       scrollToBottom();
     }
 
