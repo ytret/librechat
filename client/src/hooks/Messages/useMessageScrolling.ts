@@ -9,7 +9,18 @@ import store from '~/store';
 
 const threshold = 0.85;
 const debounceRate = 150;
-const resizeFollowThreshold = 120;
+// Distance (px) from the bottom at which auto-follow still engages — the "trigger area".
+// Larger keeps the view stuck to the bottom more aggressively during streaming;
+// smaller makes it easier to scroll away mid-stream.
+const resizeFollowThreshold = 240;
+// Expand the IntersectionObserver's bottom edge by the same amount so its notion of
+// "near bottom" matches getIsNearBottom(). Without this, the zero-height messages-end
+// marker only counts as visible at exactly 0px, shrinking the trigger area to nothing.
+const nearBottomRootMargin = `0px 0px ${resizeFollowThreshold}px 0px`;
+// A scroll-up that leaves the view within this many px of the true bottom is treated as a
+// programmatic re-clamp (e.g. content shrink while pinned to the bottom) rather than a
+// deliberate scroll-away, so it doesn't disengage auto-follow.
+const bottomSnapEpsilon = 4;
 
 export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const autoScroll = useRecoilValue(store.autoScroll);
@@ -18,6 +29,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
+  const prevScrollTopRef = useRef<number | null>(null);
   const suppressNextResizeFollowRef = useRef(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
   const { conversation, conversationId } = useMessagesConversation();
@@ -58,7 +70,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
         isNearBottomRef.current = entry.isIntersecting;
         debouncedSetShowScrollButton(!entry.isIntersecting);
       },
-      { root: scrollableRef.current, threshold },
+      { root: scrollableRef.current, threshold, rootMargin: nearBottomRootMargin },
     );
 
     observer.observe(messagesEndRef.current);
@@ -85,32 +97,45 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   });
 
   const debouncedHandleScroll = useCallback(() => {
-    isNearBottomRef.current = getIsNearBottom();
-    if (!isNearBottomRef.current) {
-      // Drop any pending trailing scroll so a scroll-away isn't overridden by it.
-      scrollToBottom?.cancel();
-      // Scrollbar drags, keyboard scrolling, and MessageNav jumps don't pass through the
-      // wheel/touch handlers that set abortScroll, so mark the follow as aborted here so
-      // the stream stops pulling the view back down.
-      if (isSubmittingRef.current) {
+    const scrollEl = scrollableRef.current;
+    const scrollTop = scrollEl?.scrollTop ?? 0;
+    const prevScrollTop = prevScrollTopRef.current;
+    prevScrollTopRef.current = scrollTop;
+    // Positive = scrolling down, negative = scrolling up.
+    const direction = prevScrollTop === null ? 0 : scrollTop - prevScrollTop;
+
+    const distanceFromBottom = scrollEl
+      ? scrollEl.scrollHeight - scrollTop - scrollEl.clientHeight
+      : 0;
+    isNearBottomRef.current = distanceFromBottom <= resizeFollowThreshold;
+
+    if (isSubmittingRef.current) {
+      if (direction < 0 && distanceFromBottom > bottomSnapEpsilon) {
+        // The user scrolled up (even within the trigger area): disengage auto-follow and
+        // drop any pending trailing scroll so it can't override the scroll-away. This
+        // covers wheel, touch, scrollbar drags, keyboard, and MessageNav uniformly.
+        scrollToBottom?.cancel();
+        abortScrollRef.current = true;
         setAbortScroll(true);
+      } else if (direction > 0 && isNearBottomRef.current) {
+        // The user scrolled back down to the bottom: resume following.
+        abortScrollRef.current = false;
+        setAbortScroll(false);
       }
-    } else if (isSubmittingRef.current && abortScrollRef.current) {
-      // The user scrolled back to the bottom mid-stream: resume following.
-      setAbortScroll(false);
     }
+
     if (messagesEndRef.current && scrollableRef.current) {
       const observer = new IntersectionObserver(
         ([entry]) => {
           isNearBottomRef.current = entry.isIntersecting;
           debouncedSetShowScrollButton(!entry.isIntersecting);
         },
-        { root: scrollableRef.current, threshold },
+        { root: scrollableRef.current, threshold, rootMargin: nearBottomRootMargin },
       );
       observer.observe(messagesEndRef.current);
       return () => observer.disconnect();
     }
-  }, [debouncedSetShowScrollButton, getIsNearBottom, scrollToBottom, setAbortScroll]);
+  }, [debouncedSetShowScrollButton, scrollToBottom, setAbortScroll]);
 
   const clampScrollToContent = useCallback(() => {
     const scrollEl = scrollableRef.current;

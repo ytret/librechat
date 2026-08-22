@@ -1,25 +1,15 @@
 import { useCallback, useMemo } from 'react';
-import throttle from 'lodash/throttle';
 import { isAssistantsEndpoint, isAgentsEndpoint } from 'librechat-data-provider';
 import type { TMessageProps } from '~/common';
 import { useMessagesViewContext, useAssistantsMapContext, useAgentsMapContext } from '~/Providers';
 import useCopyToClipboard from './useCopyToClipboard';
 import { useGetAddedConvo } from '~/hooks/Chat';
-import { logger } from '~/utils';
 
 export default function useMessageHelpers(props: TMessageProps) {
   const { message, currentEditId, setCurrentEditId } = props;
 
-  const {
-    ask,
-    index,
-    regenerate,
-    isSubmitting,
-    conversation,
-    setAbortScroll,
-    handleContinue,
-    latestMessageId,
-  } = useMessagesViewContext();
+  const { ask, index, regenerate, isSubmitting, conversation, handleContinue, latestMessageId } =
+    useMessagesViewContext();
   const agentsMap = useAgentsMapContext();
   const assistantMap = useAssistantsMapContext();
 
@@ -32,24 +22,6 @@ export default function useMessageHelpers(props: TMessageProps) {
   const enterEdit = useCallback(
     (cancel?: boolean) => setCurrentEditId && setCurrentEditId(cancel === true ? -1 : messageId),
     [messageId, setCurrentEditId],
-  );
-
-  const handleScroll = useCallback(
-    (event: unknown) => {
-      throttle(() => {
-        logger.log(
-          'message_scrolling',
-          `useMessageHelpers: setting abort scroll to ${isSubmitting}, handleScroll event`,
-          event,
-        );
-        if (isSubmitting) {
-          setAbortScroll(true);
-        } else {
-          setAbortScroll(false);
-        }
-      }, 500)();
-    },
-    [isSubmitting, setAbortScroll],
   );
 
   const assistant = useMemo(() => {
@@ -93,7 +65,6 @@ export default function useMessageHelpers(props: TMessageProps) {
     enterEdit,
     conversation,
     isSubmitting,
-    handleScroll,
     handleContinue,
     latestMessageId,
     copyToClipboard,

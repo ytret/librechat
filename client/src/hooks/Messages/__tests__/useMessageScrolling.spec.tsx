@@ -241,6 +241,25 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
+  it('still follows resizes while within the near-bottom trigger area', () => {
+    renderScrolling();
+
+    const scrollable = screen.getByTestId('scrollable');
+    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+    // distance from bottom = 1000 - 600 - 200 = 200px: beyond the old 120px trigger
+    // area but inside the enlarged one, so follow must still engage.
+    scrollable.scrollTop = 600;
+
+    fireEvent.scroll(scrollable);
+
+    act(() => {
+      MockResizeObserver.last()?.trigger();
+    });
+
+    expect(mockScrollToBottom).toHaveBeenCalled();
+  });
+
   it('does not follow the next resize after user interaction inside message content', () => {
     renderScrolling();
 
@@ -335,7 +354,7 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
-  it('marks auto-scroll as aborted when the user scrolls away via the scroll container', () => {
+  it('marks auto-scroll as aborted when the user scrolls up, even within the trigger area', () => {
     const setAbortScroll = jest.fn();
     renderScrolling({
       contextOverrides: { isSubmitting: true, setAbortScroll },
@@ -345,11 +364,53 @@ describe('useMessageScrolling resize reconciliation', () => {
     const scrollable = screen.getByTestId('scrollable');
     Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
-    scrollable.scrollTop = 100;
+    scrollable.scrollTop = 800; // at the bottom
+    fireEvent.scroll(scrollable); // establish the previous scroll position
 
-    fireEvent.scroll(scrollable);
+    scrollable.scrollTop = 600; // distance 200px: still within the trigger area
+    fireEvent.scroll(scrollable); // scrolling up must disengage
 
     expect(setAbortScroll).toHaveBeenCalledWith(true);
+  });
+
+  it('resumes auto-follow when the user scrolls down to the bottom', () => {
+    const setAbortScroll = jest.fn();
+    renderScrolling({
+      contextOverrides: { isSubmitting: true, abortScroll: true, setAbortScroll },
+      messagesTree: [message],
+    });
+
+    const scrollable = screen.getByTestId('scrollable');
+    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+    scrollable.scrollTop = 300; // far from the bottom
+    fireEvent.scroll(scrollable); // establish the previous scroll position
+
+    scrollable.scrollTop = 800; // back to the bottom
+    fireEvent.scroll(scrollable); // scrolling down must resume following
+
+    expect(setAbortScroll).toHaveBeenCalledWith(false);
+  });
+
+  it('does not abort when the view is re-clamped to the bottom while pinned', () => {
+    const setAbortScroll = jest.fn();
+    renderScrolling({
+      contextOverrides: { isSubmitting: true, setAbortScroll },
+      messagesTree: [message],
+    });
+
+    const scrollable = screen.getByTestId('scrollable');
+    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+    scrollable.scrollTop = 800; // pinned to the bottom
+    fireEvent.scroll(scrollable);
+
+    // A tiny upward shift (e.g. content shrink re-clamping the view) stays within the
+    // snap epsilon, so it must not be mistaken for a deliberate scroll-away.
+    scrollable.scrollTop = 798;
+    fireEvent.scroll(scrollable);
+
+    expect(setAbortScroll).not.toHaveBeenCalled();
   });
 
   it('does not follow resizes after generation completes even if content still resizes', () => {

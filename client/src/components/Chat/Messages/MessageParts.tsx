@@ -30,7 +30,6 @@ export default function Message(props: TMessageProps) {
     isLast,
     enterEdit,
     assistant,
-    handleScroll,
     conversation,
     isSubmitting,
     latestMessageId,
@@ -99,11 +98,7 @@ export default function Message(props: TMessageProps) {
 
   return (
     <>
-      <div
-        className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent"
-        onWheel={handleScroll}
-        onTouchMove={handleScroll}
-      >
+      <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
         <div className="m-auto justify-center p-4 py-2 md:gap-6">
           <div
             id={messageId ?? ''}
