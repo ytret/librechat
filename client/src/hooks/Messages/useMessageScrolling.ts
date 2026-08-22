@@ -69,21 +69,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
     };
   }, [messagesEndRef, scrollableRef, debouncedSetShowScrollButton]);
 
-  const debouncedHandleScroll = useCallback(() => {
-    isNearBottomRef.current = getIsNearBottom();
-    if (messagesEndRef.current && scrollableRef.current) {
-      const observer = new IntersectionObserver(
-        ([entry]) => {
-          isNearBottomRef.current = entry.isIntersecting;
-          debouncedSetShowScrollButton(!entry.isIntersecting);
-        },
-        { root: scrollableRef.current, threshold },
-      );
-      observer.observe(messagesEndRef.current);
-      return () => observer.disconnect();
-    }
-  }, [debouncedSetShowScrollButton, getIsNearBottom]);
-
   const scrollCallback = () => {
     reconcileMessageContentLayout(scrollableRef.current);
     isNearBottomRef.current = true;
@@ -98,6 +83,25 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       setAbortScroll(false);
     },
   });
+
+  const debouncedHandleScroll = useCallback(() => {
+    isNearBottomRef.current = getIsNearBottom();
+    if (!isNearBottomRef.current) {
+      // Drop any pending trailing scroll so a scroll-away isn't overridden by it.
+      scrollToBottom?.cancel();
+    }
+    if (messagesEndRef.current && scrollableRef.current) {
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          isNearBottomRef.current = entry.isIntersecting;
+          debouncedSetShowScrollButton(!entry.isIntersecting);
+        },
+        { root: scrollableRef.current, threshold },
+      );
+      observer.observe(messagesEndRef.current);
+      return () => observer.disconnect();
+    }
+  }, [debouncedSetShowScrollButton, getIsNearBottom, scrollToBottom]);
 
   const clampScrollToContent = useCallback(() => {
     const scrollEl = scrollableRef.current;
@@ -177,7 +181,12 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       return;
     }
 
-    if (isSubmitting && scrollToBottom && abortScroll !== true) {
+    if (
+      isSubmitting &&
+      scrollToBottom &&
+      abortScroll !== true &&
+      isNearBottomRef.current
+    ) {
       scrollToBottom();
     }
 

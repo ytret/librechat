@@ -288,6 +288,37 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
+  it('does not follow message tree changes after the user scrolls away (scrollbar only)', () => {
+    const { rerender } = renderScrolling({
+      contextOverrides: { isSubmitting: true },
+      messagesTree: [message],
+    });
+
+    // The mount effect follows the initial tree; clear it so we only assert on the
+    // post-scroll re-render.
+    mockScrollToBottom.mockClear();
+
+    const scrollable = screen.getByTestId('scrollable');
+    Object.defineProperty(scrollable, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scrollable, 'clientHeight', { value: 200, configurable: true });
+    scrollable.scrollTop = 100;
+
+    fireEvent.scroll(scrollable);
+
+    // A new streaming token produces a new tree; without the guard this would scroll back down.
+    rerender(
+      <RecoilRoot>
+        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: true })}>
+          <ScrollingHarness
+            messagesTree={[...[message], { ...message, messageId: 'message-2' }]}
+          />
+        </MessagesViewContext.Provider>
+      </RecoilRoot>,
+    );
+
+    expect(mockScrollToBottom).not.toHaveBeenCalled();
+  });
+
   it('does not follow resizes after generation completes even if content still resizes', () => {
     const { rerender } = renderScrolling({ contextOverrides: { isSubmitting: true } });
 
