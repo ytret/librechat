@@ -1,9 +1,15 @@
-import { useCallback, useMemo, memo } from 'react';
+import { useCallback, useMemo, memo, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import type { TMessage, TMessageContentParts } from 'librechat-data-provider';
 import type { TMessageProps, TMessageIcon, TMessageChatContext } from '~/common';
-import { useAttachments, useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
+import {
+  useAttachments,
+  useLocalize,
+  useMessageActions,
+  useContentMetadata,
+  useSelectionPreserve,
+} from '~/hooks';
 import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
@@ -126,6 +132,9 @@ const ContentRender = memo(function ContentRender({
   const fontSize = useAtomValue(fontSizeAtom);
   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
 
+  const messageRef = useRef<HTMLDivElement>(null);
+  useSelectionPreserve(messageRef, isSubmitting);
+
   const handleRegenerateMessage = useCallback(() => regenerateMessage(), [regenerateMessage]);
   const isLast = useMemo(
     () => !(msg?.children?.length ?? 0) && (msg?.depth === latestMessageDepth || msg?.depth === -1),
@@ -180,6 +189,7 @@ const ContentRender = memo(function ContentRender({
 
   return (
     <div
+      ref={messageRef}
       id={msg.messageId}
       aria-label={getMessageAriaLabel(msg, localize)}
       className={cn(

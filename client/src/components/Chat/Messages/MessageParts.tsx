@@ -1,9 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import type { TMessageContentParts } from 'librechat-data-provider';
 import type { TMessageProps, TMessageIcon } from '~/common';
-import { useMessageHelpers, useLocalize, useAttachments, useContentMetadata } from '~/hooks';
+import {
+  useMessageHelpers,
+  useLocalize,
+  useAttachments,
+  useContentMetadata,
+  useSelectionPreserve,
+} from '~/hooks';
 import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
@@ -41,6 +47,9 @@ export default function Message(props: TMessageProps) {
   const fontSize = useAtomValue(fontSizeAtom);
   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
   const { children, messageId = null, isCreatedByUser } = message ?? {};
+
+  const messageRef = useRef<HTMLDivElement>(null);
+  useSelectionPreserve(messageRef, messageId === latestMessageId && isSubmitting);
 
   const name = useMemo(() => {
     let result = '';
@@ -101,6 +110,7 @@ export default function Message(props: TMessageProps) {
       <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
         <div className="m-auto justify-center p-4 py-2 md:gap-6">
           <div
+            ref={messageRef}
             id={messageId ?? ''}
             aria-label={getMessageAriaLabel(message, localize)}
             className={cn(

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, memo } from 'react';
+import React, { useCallback, useMemo, memo, useRef } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import type { TMessage } from 'librechat-data-provider';
@@ -6,7 +6,7 @@ import type { TMessageProps, TMessageIcon, TMessageChatContext } from '~/common'
 import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
 import MessageContent from '~/components/Chat/Messages/Content/MessageContent';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
-import { useLocalize, useMessageActions, useContentMetadata } from '~/hooks';
+import { useLocalize, useMessageActions, useContentMetadata, useSelectionPreserve } from '~/hooks';
 import PlaceholderRow from '~/components/Chat/Messages/ui/PlaceholderRow';
 import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
 import HoverButtons from '~/components/Chat/Messages/HoverButtons';
@@ -122,6 +122,9 @@ const MessageRender = memo(function MessageRender({
   const fontSize = useAtomValue(fontSizeAtom);
   const maximizeChatSpace = useRecoilValue(store.maximizeChatSpace);
 
+  const messageRef = useRef<HTMLDivElement>(null);
+  useSelectionPreserve(messageRef, isSubmitting);
+
   const handleRegenerateMessage = useCallback(() => regenerateMessage(), [regenerateMessage]);
   const hasNoChildren = !(msg?.children?.length ?? 0);
   const isLast = useMemo(
@@ -187,6 +190,7 @@ const MessageRender = memo(function MessageRender({
 
   return (
     <div
+      ref={messageRef}
       id={msg.messageId}
       aria-label={getMessageAriaLabel(msg, localize)}
       className={cn(
