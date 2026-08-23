@@ -413,6 +413,22 @@ describe('useMessageScrolling resize reconciliation', () => {
     expect(setAbortScroll).not.toHaveBeenCalled();
   });
 
+  it('cancels any pending trailing scroll when generation completes', () => {
+    const { rerender } = renderScrolling({ contextOverrides: { isSubmitting: true } });
+
+    mockScrollToBottom.cancel.mockClear();
+
+    rerender(
+      <RecoilRoot>
+        <MessagesViewContext.Provider value={createContextValue({ isSubmitting: false })}>
+          <ScrollingHarness />
+        </MessagesViewContext.Provider>
+      </RecoilRoot>,
+    );
+
+    expect(mockScrollToBottom.cancel).toHaveBeenCalled();
+  });
+
   it('does not follow resizes after generation completes even if content still resizes', () => {
     const { rerender } = renderScrolling({ contextOverrides: { isSubmitting: true } });
 

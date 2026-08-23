@@ -226,6 +226,17 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
     };
   }, [isSubmitting, messagesTree, scrollToBottom, abortScroll]);
 
+  // Drop any pending trailing throttled scroll when generation ends. The
+  // scrollToBottom throttle (145ms, leading + trailing) keeps a trailing
+  // invocation alive after the last streaming token; without cancelling it, that
+  // trailing edge fires a final jump to the bottom shortly after the stream
+  // completes (most visible when the final message swap grows the content).
+  useEffect(() => {
+    if (!isSubmitting) {
+      scrollToBottom?.cancel();
+    }
+  }, [isSubmitting, scrollToBottom]);
+
   useEffect(() => {
     if (!messagesEndRef.current || !scrollableRef.current) {
       return;
