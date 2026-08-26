@@ -448,6 +448,13 @@ export default function useResumableSSE(
   const submissionRef = useRef<TSubmission | null>(null);
   const optimisticStreamIdsRef = useRef(new Set<string>());
   const createdStreamIdsRef = useRef(new Set<string>());
+  // Set once the FINAL event for the active stream has been processed. Some
+  // providers/proxies drop the transport right after delivering the final event,
+  // which sse.js surfaces as a network `error` (responseCode 0). Without this
+  // guard that spurious error kicks off the reconnect path, which sets
+  // isSubmitting back to true and (on the resume's `open`) clears abortScroll —
+  // re-arming auto-follow and teleporting a user who had scrolled up.
+  const finalizedRef = useRef(false);
 
   const {
     stepHandler,
@@ -517,6 +524,7 @@ export default function useResumableSSE(
         method: 'GET',
       });
       sseRef.current = sse;
+      finalizedRef.current = false;
 
       sse.addEventListener('open', () => {
         console.log('[ResumableSSE] Stream connected');
@@ -554,6 +562,9 @@ export default function useResumableSSE(
             // Optimistically remove from active jobs
             removeActiveJob(currentStreamId);
             (startupConfig?.balance?.enabled ?? false) && balanceQuery.refetch();
+            // Mark finalized before closing so the transport-teardown `error` that
+            // follows is ignored rather than triggering a reconnect.
+            finalizedRef.current = true;
             sse.close();
             setStreamId(null);
             optimisticStreamIdsRef.current.delete(currentStreamId);
@@ -843,6 +854,16 @@ export default function useResumableSSE(
 
         /* @ts-ignore - sse.js types don't expose responseCode */
         const responseCode = e.responseCode;
+
+        // The FINAL event already completed the turn. A transport error arriving
+        // after it (providers/proxies often drop the socket right after final) is
+        // noise — reconnect here would flip isSubmitting back on and clear the
+        // user's scroll-away flag, snapping the view to the bottom.
+        if (finalizedRef.current) {
+          console.log('[ResumableSSE] Error after final event - ignoring (no reconnect)');
+          sse.close();
+          return;
+        }
 
         // 404 → job completed & was cleaned up; messages are persisted in DB.
         // Invalidate cache once so react-query refetches instead of showing an error.

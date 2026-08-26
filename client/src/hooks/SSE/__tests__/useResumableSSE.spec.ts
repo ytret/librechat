@@ -1480,6 +1480,56 @@ describe('useResumableSSE - 404 error path', () => {
     unmount();
   });
 
+  it('does not reconnect when a network error arrives after the final event', async () => {
+    jest.useFakeTimers();
+    const submission = buildSubmission();
+    const chatHelpers = buildChatHelpers();
+
+    const { unmount } = renderHook(() => useResumableSSE(submission, chatHelpers));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sse = getLastSSE();
+    const finalPayload = {
+      final: true,
+      conversation: { conversationId: CONV_ID },
+      requestMessage: {
+        messageId: 'msg-1',
+        conversationId: CONV_ID,
+        text: 'Hello',
+        isCreatedByUser: true,
+      },
+      responseMessage: {
+        messageId: 'resp-1',
+        conversationId: CONV_ID,
+        text: 'Done',
+        isCreatedByUser: false,
+      },
+    };
+
+    await act(async () => {
+      sse._emit('message', { data: JSON.stringify(finalPayload) });
+    });
+
+    expect(mockFinalHandler).toHaveBeenCalledTimes(1);
+    const sseCountAfterFinal = mockSSEInstances.length;
+
+    // A transport teardown (responseCode 0) right after the final event must not
+    // kick off the reconnect path — that would flip isSubmitting back on and clear
+    // the user's scroll-away flag, snapping the view to the bottom.
+    await act(async () => {
+      sse._emit('error', { responseCode: 0 });
+    });
+
+    // Advance past the reconnect backoff to prove no new subscription is made.
+    await advanceRetryTimer(2000);
+
+    expect(mockSSEInstances.length).toBe(sseCountAfterFinal);
+    unmount();
+  });
+
   it.each([undefined, 500, 503])(
     'does not call errorHandler for responseCode %s (reconnect path)',
     async (responseCode) => {
