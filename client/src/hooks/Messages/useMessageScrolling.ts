@@ -40,7 +40,17 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const isSubmittingRef = useRef(isSubmitting);
   isSubmittingRef.current = isSubmitting;
   const abortScrollRef = useRef(abortScroll);
-  abortScrollRef.current = abortScroll;
+
+  // Sync abortScrollRef from Recoil state ONLY on a real state transition. The
+  // scroll handler writes this ref synchronously (scroll-away -> true, scroll back
+  // -> false), and that intent must win over the still-stale `abortScroll` value
+  // during the render(s) it takes the state to propagate. Syncing in the render
+  // body would clobber the handler's update with the stale value; a dep-guarded
+  // effect only runs once the state actually commits, so it leaves the synchronous
+  // intent intact in the window.
+  useEffect(() => {
+    abortScrollRef.current = abortScroll;
+  }, [abortScroll]);
 
   const timeoutIdRef = useRef<NodeJS.Timeout>();
 
@@ -87,6 +97,13 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
     debouncedSetShowScrollButton(false);
   };
 
+  // The final backstop for "don't teleport the user": evaluated synchronously at
+  // the instant the throttled scroll edge actually fires (leading or trailing),
+  // after any pending timers/races. abortScrollRef is updated synchronously in the
+  // scroll handler, so this reflects the user's latest scroll-away intent even
+  // before the abortScroll state has propagated through Recoil.
+  const shouldScroll = useCallback(() => abortScrollRef.current !== true, []);
+
   const { scrollToRef: scrollToBottom, handleSmoothToRef } = useScrollToRef({
     targetRef: messagesEndRef,
     callback: scrollCallback,
@@ -94,6 +111,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       scrollCallback();
       setAbortScroll(false);
     },
+    shouldScroll,
   });
 
   const debouncedHandleScroll = useCallback(() => {
@@ -215,12 +233,15 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       return;
     }
 
-    if (isSubmitting && scrollToBottom && abortScroll !== true) {
+    // Read the synchronous ref rather than the `abortScroll` state: the state lags
+    // by a render, so a token/final-swap landing in that window would otherwise be
+    // able to fire a scroll after the user has already scrolled away.
+    if (isSubmitting && scrollToBottom && abortScrollRef.current !== true) {
       scrollToBottom();
     }
 
     return () => {
-      if (abortScroll === true) {
+      if (abortScrollRef.current === true) {
         scrollToBottom && scrollToBottom.cancel();
       }
     };
