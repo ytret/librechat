@@ -40,9 +40,11 @@ jest.mock('~/hooks', () => {
   const useMemoizedChatContext = jest.requireActual(
     '~/hooks/Messages/useMemoizedChatContext',
   ).default;
+  const useSelectionPreserve = jest.requireActual('~/hooks/Messages/useSelectionPreserve').default;
   return {
     useMessageProcess,
     useMemoizedChatContext,
+    useSelectionPreserve,
     useContentMetadata: () => ({ hasParallelContent: false }),
     useLocalize: () => (key: string) => key,
     useMessageActions: ({
