@@ -8,6 +8,7 @@ import MessageContent from '~/components/Chat/Messages/Content/MessageContent';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import { useLocalize, useMessageActions, useContentMetadata, useSelectionPreserve } from '~/hooks';
 import PlaceholderRow from '~/components/Chat/Messages/ui/PlaceholderRow';
+import ResponseTokens from '~/components/Chat/Messages/ResponseTokens';
 import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
 import HoverButtons from '~/components/Chat/Messages/HoverButtons';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
@@ -265,6 +266,7 @@ const MessageRender = memo(function MessageRender({
                 handleFeedback={handleFeedback}
                 isLast={isLast}
               />
+              <ResponseTokens message={msg} isLast={isLast} />
             </SubRow>
           )}
         </div>

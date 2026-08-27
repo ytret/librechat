@@ -14,6 +14,7 @@ import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import ContentParts from '~/components/Chat/Messages/Content/ContentParts';
 import PlaceholderRow from '~/components/Chat/Messages/ui/PlaceholderRow';
+import ResponseTokens from '~/components/Chat/Messages/ResponseTokens';
 import SiblingSwitch from '~/components/Chat/Messages/SiblingSwitch';
 import HoverButtons from '~/components/Chat/Messages/HoverButtons';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
@@ -265,6 +266,7 @@ const ContentRender = memo(function ContentRender({
                 handleFeedback={handleFeedback}
                 isLast={isLast}
               />
+              <ResponseTokens message={msg} isLast={isLast} />
             </SubRow>
           )}
         </div>

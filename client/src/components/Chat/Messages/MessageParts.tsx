@@ -18,6 +18,7 @@ import { fontSizeAtom } from '~/store/fontSize';
 import SiblingSwitch from './SiblingSwitch';
 import MultiMessage from './MultiMessage';
 import HoverButtons from './HoverButtons';
+import ResponseTokens from './ResponseTokens';
 import SubRow from './SubRow';
 import store from '~/store';
 
@@ -184,6 +185,7 @@ export default function Message(props: TMessageProps) {
                       latestMessageId={latestMessageId}
                       isLast={isLast}
                     />
+                    <ResponseTokens message={message} isLast={isLast} />
                   </SubRow>
                 )}
               </div>

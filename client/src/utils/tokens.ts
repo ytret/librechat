@@ -91,7 +91,7 @@ function stickyUsage(conversationId: string, messageId: string): BranchUsage | u
  *  The backend already normalized per-event into display units, so this reads
  *  them directly. Absent for user messages and pre-feature responses (they
  *  contribute 0 to branch/total). */
-function readPersistedUsage(message: Partial<TMessage>): BranchUsage | undefined {
+export function readPersistedUsage(message: Partial<TMessage>): BranchUsage | undefined {
   const usage = message.metadata?.usage;
   if (usage == null || typeof usage !== 'object') {
     return undefined;
