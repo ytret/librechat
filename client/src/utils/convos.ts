@@ -33,26 +33,7 @@ export const dateKeys = {
   december: 'com_ui_date_december',
 };
 
-const getGroupName = (date: Date) => {
-  const now = new Date(Date.now());
-  if (isToday(date)) {
-    return dateKeys.today;
-  }
-  if (isWithinInterval(date, { start: startOfDay(subDays(now, 1)), end: now })) {
-    return dateKeys.yesterday;
-  }
-  if (isWithinInterval(date, { start: subDays(now, 7), end: now })) {
-    return dateKeys.previous7Days;
-  }
-  if (isWithinInterval(date, { start: subDays(now, 30), end: now })) {
-    return dateKeys.previous30Days;
-  }
-  if (isWithinInterval(date, { start: startOfYear(now), end: now })) {
-    const month = format(date, 'MMMM').toLowerCase();
-    return dateKeys[month];
-  }
-  return ' ' + getYear(date).toString();
-};
+const getGroupName = (date: Date) => format(date, 'yyyy-MM-dd');
 
 const monthOrderMap = new Map([
   ['december', 11],
@@ -112,27 +93,11 @@ export const groupConversationsByDate = (
   });
 
   const sortedGroups = new Map();
-  dateGroupsSet.forEach((group) => {
-    if (groups.has(group)) {
+  Array.from(groups.keys())
+    .sort((a, b) => b.localeCompare(a))
+    .forEach((group) => {
       sortedGroups.set(group, groups.get(group));
-    }
-  });
-
-  const yearMonthGroups = Array.from(groups.keys())
-    .filter((group) => !dateGroupsSet.has(group))
-    .sort((a, b) => {
-      const [yearA, yearB] = [parseInt(a.trim()), parseInt(b.trim())];
-      if (yearA !== yearB) {
-        return yearB - yearA;
-      }
-      const [monthA, monthB] = [dateKeysReverse[a], dateKeysReverse[b]];
-      const bOrder = monthOrderMap.get(monthB) ?? -1,
-        aOrder = monthOrderMap.get(monthA) ?? -1;
-      return bOrder - aOrder;
     });
-  yearMonthGroups.forEach((group) => {
-    sortedGroups.set(group, groups.get(group));
-  });
 
   sortedGroups.forEach((conversations) => {
     conversations.sort(
