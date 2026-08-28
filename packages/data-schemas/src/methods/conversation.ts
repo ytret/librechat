@@ -1,7 +1,8 @@
 import { RetentionMode } from 'librechat-data-provider';
+import type { ConversationMetadataResponse } from 'librechat-data-provider';
 import type { FilterQuery, Model, SortOrder } from 'mongoose';
 import type { DeleteResult } from 'mongoose';
-import type { AppConfig, IChatProjectDocument, IConversation } from '~/types';
+import type { AppConfig, IChatProjectDocument, IConversation, IMessage } from '~/types';
 import type { MessageMethods } from './message';
 import {
   refreshChatProjectStatsForUser,
@@ -56,6 +57,10 @@ export interface ConversationMethods {
     convoMap: Record<string, unknown>;
   }>;
   getConvo(user: string, conversationId: string): Promise<IConversation | null>;
+  getConvoMetadata(
+    user: string,
+    conversationId: string,
+  ): Promise<ConversationMetadataResponse | null>;
   getConvoRetention(
     user: string,
     conversationId: string,
@@ -108,6 +113,56 @@ export function createConversationMethods(
     } catch (error) {
       logger.error('[getConvo] Error getting single conversation', error);
       throw new Error('Error getting single conversation');
+    }
+  }
+
+  /**
+   * Retrieves display metadata for a conversation, enriched with message stats
+   * (count and latest message time) from the message collection.
+   */
+  async function getConvoMetadata(
+    user: string,
+    conversationId: string,
+  ): Promise<ConversationMetadataResponse | null> {
+    try {
+      const Conversation = mongoose.models.Conversation as Model<IConversation>;
+      const convo = await Conversation.findOne({ user, conversationId }).lean<IConversation>();
+      if (!convo) {
+        return null;
+      }
+
+      const Message = mongoose.models.Message as Model<IMessage>;
+      const [stats] = await Message.aggregate<{
+        messageCount: number;
+        lastMessageAt: Date | null;
+      }>([
+        { $match: { conversationId, user } },
+        {
+          $group: {
+            _id: null,
+            messageCount: { $sum: 1 },
+            lastMessageAt: { $max: '$createdAt' },
+          },
+        },
+      ]);
+
+      return {
+        conversationId: convo.conversationId,
+        title: convo.title ?? null,
+        endpoint: convo.endpoint ?? null,
+        model: convo.model ?? null,
+        modelLabel: convo.modelLabel ?? null,
+        agentId: convo.agent_id ?? null,
+        assistantId: convo.assistant_id ?? null,
+        chatProjectId: convo.chatProjectId ?? null,
+        createdAt: convo.createdAt ? new Date(convo.createdAt).toISOString() : null,
+        lastMessageAt: stats?.lastMessageAt ? new Date(stats.lastMessageAt).toISOString() : null,
+        updatedAt: convo.updatedAt ? new Date(convo.updatedAt).toISOString() : null,
+        messageCount: stats?.messageCount ?? 0,
+      };
+    } catch (error) {
+      logger.error('[getConvoMetadata] Error getting conversation metadata', error);
+      throw new Error('Error getting conversation metadata');
     }
   }
 
@@ -827,6 +882,7 @@ export function createConversationMethods(
     getConvosByCursor,
     getConvosQueried,
     getConvo,
+    getConvoMetadata,
     getConvoRetention,
     getConvoTitle,
     deleteConvos,

@@ -821,6 +821,12 @@ export function getConversationById(id: string): Promise<s.TConversation> {
   return request.get(endpoints.conversationById(id));
 }
 
+export function getConversationMetadata(
+  id: string,
+): Promise<q.ConversationMetadataResponse> {
+  return request.get(endpoints.conversationMetadata(id));
+}
+
 export function updateConversation(
   payload: t.TUpdateConversationRequest,
 ): Promise<t.TUpdateConversationResponse> {

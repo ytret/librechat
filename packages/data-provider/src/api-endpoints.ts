@@ -117,6 +117,8 @@ export const conversations = (params: q.ConversationListParams) => {
 
 export const conversationById = (id: string) => `${conversationsRoot}/${id}`;
 
+export const conversationMetadata = (id: string) => `${conversationsRoot}/${id}/metadata`;
+
 export const genTitle = (conversationId: string) =>
   `${conversationsRoot}/gen_title/${encodeURIComponent(conversationId)}`;
 

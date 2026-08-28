@@ -74,6 +74,22 @@ export const useGetConversationByIdQuery = (
   );
 };
 
+export const useGetConversationMetadataQuery = (
+  conversationId: string,
+  config?: UseQueryOptions<q.ConversationMetadataResponse>,
+): QueryObserverResult<q.ConversationMetadataResponse> => {
+  return useQuery<q.ConversationMetadataResponse>(
+    [QueryKeys.conversationMetadata, conversationId],
+    () => dataService.getConversationMetadata(conversationId),
+    {
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      ...config,
+    },
+  );
+};
+
 //This isn't ideal because its just a query and we're using mutation, but it was the only way
 //to make it work with how the Chat component is structured
 export const useGetConversationByIdMutation = (id: string): UseMutationResult<s.TConversation> => {

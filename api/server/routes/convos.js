@@ -7,6 +7,7 @@ const {
   restoreTenantContextFromReq,
   deleteAllSharedLinksWithCleanup,
   deleteConvoSharedLinksWithCleanup,
+  createConversationMetadataHandler,
 } = require('@librechat/api');
 const { logger } = require('@librechat/data-schemas');
 const { CacheKeys, EModelEndpoint } = require('librechat-data-provider');
@@ -82,6 +83,12 @@ router.get('/:conversationId', async (req, res) => {
     res.status(404).end();
   }
 });
+
+const conversationMetadataHandler = createConversationMetadataHandler({
+  getConvoMetadata: db.getConvoMetadata,
+});
+
+router.get('/:conversationId/metadata', conversationMetadataHandler.getMetadata);
 
 router.get('/gen_title/:conversationId', async (req, res) => {
   const { conversationId } = req.params;

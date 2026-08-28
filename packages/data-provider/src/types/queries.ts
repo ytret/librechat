@@ -32,6 +32,21 @@ export type ConversationListResponse = {
   nextCursor: string | null;
 };
 
+export type ConversationMetadataResponse = {
+  conversationId: string;
+  title: string | null;
+  endpoint: string | null;
+  model: string | null;
+  modelLabel: string | null;
+  agentId: string | null;
+  assistantId: string | null;
+  chatProjectId: string | null;
+  createdAt: string | null;
+  lastMessageAt: string | null;
+  updatedAt: string | null;
+  messageCount: number;
+};
+
 export type ConversationData = InfiniteData<ConversationListResponse>;
 export type ConversationUpdater = (
   data: ConversationData,
