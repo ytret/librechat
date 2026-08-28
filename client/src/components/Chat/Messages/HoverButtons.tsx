@@ -1,5 +1,5 @@
 import React, { useState, useMemo, memo } from 'react';
-import { useRecoilState } from 'recoil';
+import { useRecoilState, useRecoilValue } from 'recoil';
 import { EditIcon, Clipboard, CheckMark, ContinueIcon, RegenerateIcon } from '@librechat/client';
 import type { TConversation, TMessage, TFeedback } from 'librechat-data-provider';
 import { useGenerationsByLatest, useLocalize } from '~/hooks';
@@ -130,6 +130,8 @@ const HoverButtons = ({
   const localize = useLocalize();
   const [isCopied, setIsCopied] = useState(false);
   const [TextToSpeech] = useRecoilState<boolean>(store.textToSpeech);
+  const showEditButton = useRecoilValue(store.showEditButton);
+  const showFeedbackButtons = useRecoilValue(store.showFeedbackButtons);
 
   const endpoint = useMemo(() => {
     if (!conversation) {
@@ -229,7 +231,7 @@ const HoverButtons = ({
       />
 
       {/* Edit Button */}
-      {isEditableEndpoint && (
+      {isEditableEndpoint && showEditButton && (
         <HoverButton
           id={`edit-${message.messageId}`}
           onClick={onEdit}
@@ -253,7 +255,7 @@ const HoverButtons = ({
       />
 
       {/* Feedback Buttons */}
-      {!isCreatedByUser && handleFeedback != null && (
+      {!isCreatedByUser && showFeedbackButtons && handleFeedback != null && (
         <Feedback handleFeedback={handleFeedback} feedback={message.feedback} isLast={isLast} />
       )}
 

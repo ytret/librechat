@@ -602,6 +602,8 @@
   "com_nav_setting_speech": "Speech",
   "com_nav_settings": "Settings",
   "com_nav_shared_links": "Shared links",
+  "com_nav_show_edit_button": "Show edit button",
+  "com_nav_show_feedback_buttons": "Show feedback buttons",
   "com_nav_show_thinking": "Open Thinking Dropdowns by Default",
   "com_nav_slash_command": "/-Command",
   "com_nav_slash_command_description": "Toggle command \"/\" for selecting a prompt via keyboard",

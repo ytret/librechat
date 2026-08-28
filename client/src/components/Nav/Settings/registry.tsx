@@ -242,6 +242,28 @@ export const registry: SettingEntry[] = [
     }),
   },
   {
+    id: 'showEditButton',
+    tab: CHAT,
+    section: 'messages',
+    labelKey: 'com_nav_show_edit_button',
+    Component: toggleControl({
+      stateAtom: store.showEditButton,
+      localizationKey: 'com_nav_show_edit_button',
+      switchId: 'showEditButton',
+    }),
+  },
+  {
+    id: 'showFeedbackButtons',
+    tab: CHAT,
+    section: 'messages',
+    labelKey: 'com_nav_show_feedback_buttons',
+    Component: toggleControl({
+      stateAtom: store.showFeedbackButtons,
+      localizationKey: 'com_nav_show_feedback_buttons',
+      switchId: 'showFeedbackButtons',
+    }),
+  },
+  {
     id: 'autoExpandTools',
     tab: CHAT,
     section: 'messages',
