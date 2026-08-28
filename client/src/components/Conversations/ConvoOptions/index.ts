@@ -1,4 +1,5 @@
 export * from './DeleteButton';
+export { default as MetadataButton } from './MetadataButton';
 export { default as ProjectButton } from './ProjectButton';
 export { default as ShareButton } from './ShareButton';
 export { default as SharedLinkButton } from './SharedLinkButton';

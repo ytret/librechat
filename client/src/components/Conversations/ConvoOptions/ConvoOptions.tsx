@@ -5,6 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { DropdownPopup, Spinner, useToastContext } from '@librechat/client';
 import { QueryKeys, PermissionTypes, Permissions } from 'librechat-data-provider';
 import {
+  Info,
   Ellipsis,
   Share2,
   CopyPlus,
@@ -28,6 +29,7 @@ import {
 import { useHasAccess, useLocalize, useNavigateToConvo, useNewConvo } from '~/hooks';
 import { NotificationSeverity } from '~/common';
 import { useChatContext } from '~/Providers';
+import MetadataButton from './MetadataButton';
 import ProjectButton from './ProjectButton';
 import DeleteButton from './DeleteButton';
 import ShareButton from './ShareButton';
@@ -71,9 +73,11 @@ function ConvoOptions({
   const shareButtonRef = useRef<HTMLButtonElement>(null);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const projectButtonRef = useRef<HTMLButtonElement>(null);
+  const metadataButtonRef = useRef<HTMLButtonElement>(null);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showProjectDialog, setShowProjectDialog] = useState(false);
+  const [showMetadataDialog, setShowMetadataDialog] = useState(false);
   const [announcement, setAnnouncement] = useState('');
 
   const canCreateSharedLinks = useHasAccess({
@@ -137,6 +141,10 @@ function ConvoOptions({
 
   const shareHandler = useCallback(() => {
     setShowShareDialog(true);
+  }, []);
+
+  const metadataHandler = useCallback(() => {
+    setShowMetadataDialog(true);
   }, []);
 
   const deleteHandler = useCallback(() => {
@@ -264,6 +272,17 @@ function ConvoOptions({
   const dropdownItems = useMemo(
     () => [
       {
+        label: localize('com_ui_chat_metadata'),
+        onClick: metadataHandler,
+        icon: <Info className="icon-sm mr-2 text-text-primary" aria-hidden="true" />,
+        ariaHasPopup: 'dialog' as const,
+        ariaControls: 'chat-metadata-dialog',
+        /** NOTE: THE FOLLOWING PROPS ARE REQUIRED FOR MENU ITEMS THAT OPEN DIALOGS */
+        hideOnClick: false,
+        ref: metadataButtonRef,
+        render: (props) => <button {...props} />,
+      },
+      {
         label: localize('com_ui_share'),
         onClick: shareHandler,
         icon: <Share2 className="icon-sm mr-2 text-text-primary" aria-hidden="true" />,
@@ -348,6 +367,7 @@ function ConvoOptions({
       isPinned,
       isPinLoading,
       shareHandler,
+      metadataHandler,
       startupConfig,
       renameHandler,
       deleteHandler,
@@ -371,7 +391,14 @@ function ConvoOptions({
       : 'opacity-0 focus:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 data-[open]:opacity-100',
   );
 
-  if (isShiftHeld && isActiveConvo && !isPopoverActive && !showShareDialog && !showDeleteDialog) {
+  if (
+    isShiftHeld &&
+    isActiveConvo &&
+    !isPopoverActive &&
+    !showShareDialog &&
+    !showDeleteDialog &&
+    !showMetadataDialog
+  ) {
     return (
       <div className="flex items-center gap-0.5">
         <button
@@ -467,6 +494,14 @@ function ConvoOptions({
           triggerRef={projectButtonRef}
           showProjectDialog={showProjectDialog}
           setShowProjectDialog={setShowProjectDialog}
+        />
+      )}
+      {showMetadataDialog && (
+        <MetadataButton
+          conversationId={conversationId ?? ''}
+          showMetadataDialog={showMetadataDialog}
+          setShowMetadataDialog={setShowMetadataDialog}
+          triggerRef={metadataButtonRef}
         />
       )}
     </>
