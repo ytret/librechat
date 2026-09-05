@@ -2,17 +2,26 @@ import { createContext, useRef, useContext, RefObject } from 'react';
 import { toCanvas } from 'html-to-image';
 import { ThemeContext, isDark } from '@librechat/client';
 
+type ScreenshotMaterializer = () => Promise<() => void>;
 type ScreenshotContextType = {
   ref?: RefObject<HTMLDivElement>;
+  registerMaterializer?: (materializer: ScreenshotMaterializer) => () => void;
 };
 
 const ScreenshotContext = createContext<ScreenshotContextType>({});
 
+const contextMaterializers: ScreenshotMaterializer[] = [];
+
 export const useScreenshot = () => {
-  const { ref } = useContext(ScreenshotContext);
+  const context = useContext(ScreenshotContext);
+  const { ref } = context;
   const { theme } = useContext(ThemeContext);
 
   const takeScreenShot = async (node?: HTMLElement) => {
+    const restore = contextMaterializers.length
+      ? await contextMaterializers[contextMaterializers.length - 1]()
+      : () => {};
+    try {
     if (!node) {
       throw new Error('You should provide correct html node.');
     }
@@ -44,6 +53,9 @@ export const useScreenshot = () => {
     const base64Image = croppedCanvas.toDataURL('image/png', 1);
 
     return base64Image;
+    } finally {
+      restore();
+    }
   };
 
   const captureScreenshot = async () => {
@@ -56,11 +68,15 @@ export const useScreenshot = () => {
     throw new Error('Ref is not attached to any element.');
   };
 
-  return { screenshotTargetRef: ref, captureScreenshot };
+  return { screenshotTargetRef: ref, captureScreenshot, registerMaterializer: context.registerMaterializer };
 };
 
 export const ScreenshotProvider = ({ children }) => {
   const ref = useRef(null);
 
-  return <ScreenshotContext.Provider value={{ ref }}>{children}</ScreenshotContext.Provider>;
+  const registerMaterializer = (materializer: ScreenshotMaterializer) => {
+    contextMaterializers.push(materializer);
+    return () => { const index = contextMaterializers.indexOf(materializer); if (index >= 0) contextMaterializers.splice(index, 1); };
+  };
+  return <ScreenshotContext.Provider value={{ ref, registerMaterializer }}>{children}</ScreenshotContext.Provider>;
 };

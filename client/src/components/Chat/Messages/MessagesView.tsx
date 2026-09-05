@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { CSSTransition } from 'react-transition-group';
@@ -51,7 +51,6 @@ function MessagesViewContent({
               width: '100%',
             }}
           >
-            <MessageWindowingProvider scrollableRef={scrollableRef} conversationId={conversationId}>
             <div ref={contentRef} className="flex flex-col pb-9 pt-14 dark:bg-transparent">
               {(_messagesTree && _messagesTree.length == 0) || _messagesTree === null ? (
                 <div
@@ -80,7 +79,6 @@ function MessagesViewContent({
                 ref={messagesEndRef}
               />
             </div>
-            </MessageWindowingProvider>
           </div>
 
           <CSSTransition
@@ -107,7 +105,12 @@ function MessagesViewContent({
 export default function MessagesView({ messagesTree }: { messagesTree?: TMessage[] | null }) {
   return (
     <MessagesViewProvider>
-      <MessagesViewContent messagesTree={messagesTree} />
+      <MessagesViewWindowedContent messagesTree={messagesTree} />
     </MessagesViewProvider>
   );
+}
+
+function MessagesViewWindowedContent({ messagesTree }: { messagesTree?: TMessage[] | null }) {
+  const scrollableRef = useRef<HTMLElement>(null);
+  return <MessageWindowingProvider scrollableRef={scrollableRef}><MessagesViewContent messagesTree={messagesTree} /></MessageWindowingProvider>;
 }
