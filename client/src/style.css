@@ -4,6 +4,23 @@
 
 .message-render {
   scroll-margin-top: 4rem;
+  /*
+   * Style containment scopes style computation to each message subtree.
+   *
+   * Without it, any broad style invalidation (a class change on an ancestor, a
+   * draft-sync state update, the metadata dialog overlay, etc.) forces Safari to
+   * recalculate styles for the entire ~29k-node conversation document — measured
+   * at up to 617ms in a single recalculate-styles (typing) and 484ms on metadata
+   * close. With containment, a change outside a message no longer recomputes the
+   * styles inside it, so the recalc cost is proportional to the affected nodes
+   * instead of the whole mounted tree.
+   *
+   * Deliberately NOT `contain: layout` or `contain: paint`: those create a new
+   * containing block / clip the subtree and would break `position: fixed` content
+   * (e.g. DialogImage) and absolutely-positioned dropdowns inside a message.
+   * See ai-reports/02-stutter.md, Candidate A.
+   */
+  contain: style;
 }
 
 /* Custom Variables */
