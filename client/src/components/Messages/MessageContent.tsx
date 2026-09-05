@@ -4,6 +4,7 @@ import type { TMessageProps } from '~/common';
 
 import MultiMessage from '~/components/Chat/Messages/MultiMessage';
 import ContentRender from './ContentRender';
+import { VirtualizedMessageRow } from '~/components/Chat/Messages/Windowing';
 
 const MessageContainer = React.memo(function MessageContainer({
   children,
@@ -32,15 +33,13 @@ export default function MessageContent(props: TMessageProps) {
 
   return (
     <>
-      <MessageContainer>
-        <div className="m-auto justify-center p-4 py-2 md:gap-6">
-          <ContentRender
-            {...props}
-            isSubmitting={effectiveIsSubmitting}
-            chatContext={chatContext}
-          />
-        </div>
-      </MessageContainer>
+      <VirtualizedMessageRow messageId={messageId ?? ''} message={message} forceMounted={effectiveIsSubmitting || currentEditId === messageId}>
+        <MessageContainer>
+          <div className="m-auto justify-center p-4 py-2 md:gap-6">
+            <ContentRender {...props} isSubmitting={effectiveIsSubmitting} chatContext={chatContext} />
+          </div>
+        </MessageContainer>
+      </VirtualizedMessageRow>
       <MultiMessage
         messageId={messageId}
         conversation={conversation}

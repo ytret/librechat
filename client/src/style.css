@@ -7,13 +7,9 @@
   /*
    * Style containment scopes style computation to each message subtree.
    *
-   * Without it, any broad style invalidation (a class change on an ancestor, a
-   * draft-sync state update, the metadata dialog overlay, etc.) forces Safari to
-   * recalculate styles for the entire ~29k-node conversation document — measured
-   * at up to 617ms in a single recalculate-styles (typing) and 484ms on metadata
-   * close. With containment, a change outside a message no longer recomputes the
-   * styles inside it, so the recalc cost is proportional to the affected nodes
-   * instead of the whole mounted tree.
+   * In the tested trace this reduced ambient style recalculation/compositing,
+   * but it did not contain broad inherited or full-document invalidations; the
+   * largest measured spikes remained approximately 600ms.
    *
    * Deliberately NOT `contain: layout` or `contain: paint`: those create a new
    * containing block / clip the subtree and would break `position: fixed` content
@@ -21,6 +17,10 @@
    * See ai-reports/02-stutter.md, Candidate A.
    */
   contain: style;
+}
+
+.message-render[data-message-mounted='false'] {
+  overflow-anchor: none;
 }
 
 /* Custom Variables */

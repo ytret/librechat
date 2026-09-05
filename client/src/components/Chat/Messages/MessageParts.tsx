@@ -21,6 +21,7 @@ import HoverButtons from './HoverButtons';
 import ResponseTokens from './ResponseTokens';
 import SubRow from './SubRow';
 import store from '~/store';
+import { VirtualizedMessageRow } from './Windowing';
 
 export default function Message(props: TMessageProps) {
   const localize = useLocalize();
@@ -108,6 +109,7 @@ export default function Message(props: TMessageProps) {
 
   return (
     <>
+      <VirtualizedMessageRow messageId={messageId ?? ''} message={message} forceMounted={isSubmitting || currentEditId === messageId}>
       <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
         <div className="m-auto justify-center p-4 py-2 md:gap-6">
           <div
@@ -193,6 +195,7 @@ export default function Message(props: TMessageProps) {
           </div>
         </div>
       </div>
+      </VirtualizedMessageRow>
       <MultiMessage
         messageId={messageId}
         conversation={conversation}

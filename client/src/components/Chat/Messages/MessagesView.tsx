@@ -6,6 +6,7 @@ import type { TMessage } from 'librechat-data-provider';
 import { useScreenshot, useMessageScrolling, useLocalize } from '~/hooks';
 import ScrollToBottom from '~/components/Messages/ScrollToBottom';
 import { MessagesViewProvider } from '~/Providers';
+import { MessageWindowingProvider } from './Windowing';
 import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
 import MessageNav from './MessageNav';
@@ -50,6 +51,7 @@ function MessagesViewContent({
               width: '100%',
             }}
           >
+            <MessageWindowingProvider scrollableRef={scrollableRef} conversationId={conversationId}>
             <div ref={contentRef} className="flex flex-col pb-9 pt-14 dark:bg-transparent">
               {(_messagesTree && _messagesTree.length == 0) || _messagesTree === null ? (
                 <div
@@ -78,6 +80,7 @@ function MessagesViewContent({
                 ref={messagesEndRef}
               />
             </div>
+            </MessageWindowingProvider>
           </div>
 
           <CSSTransition

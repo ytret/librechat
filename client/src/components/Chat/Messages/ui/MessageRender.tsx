@@ -192,13 +192,10 @@ const MessageRender = memo(function MessageRender({
   return (
     <div
       ref={messageRef}
-      id={msg.messageId}
-      aria-label={getMessageAriaLabel(msg, localize)}
       className={cn(
         baseClasses.common,
         baseClasses.chat,
         conditionalClasses.focus,
-        'message-render',
       )}
     >
       {!hasParallelContent && (
