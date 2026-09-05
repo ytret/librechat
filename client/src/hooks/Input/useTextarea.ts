@@ -9,13 +9,7 @@ import {
   bindingFromEvent,
   resolveSubmitOverrideAction,
 } from '~/utils/shortcuts';
-import {
-  forceResize,
-  insertTextAtCursor,
-  getEntityName,
-  getEntity,
-  checkIfScrollable,
-} from '~/utils';
+import { forceResize, insertTextAtCursor, getEntityName, getEntity } from '~/utils';
 import { useAssistantsMapContext } from '~/Providers/AssistantsMapContext';
 import { useLatestMessage } from '~/hooks/Messages/useLatestMessage';
 import { useAgentsMapContext } from '~/Providers/AgentsMapContext';
@@ -32,13 +26,11 @@ type KeyEvent = KeyboardEvent<HTMLTextAreaElement>;
 export default function useTextarea({
   textAreaRef,
   submitButtonRef,
-  setIsScrollable,
   disabled = false,
   placeholder,
 }: {
   textAreaRef: React.RefObject<HTMLTextAreaElement>;
   submitButtonRef: React.RefObject<HTMLButtonElement>;
-  setIsScrollable: React.Dispatch<React.SetStateAction<boolean>>;
   disabled?: boolean;
   placeholder?: string;
 }) {
@@ -170,10 +162,6 @@ export default function useTextarea({
 
   const handleKeyDown = useCallback(
     (e: KeyEvent) => {
-      if (textAreaRef.current && checkIfScrollable(textAreaRef.current)) {
-        const scrollable = checkIfScrollable(textAreaRef.current);
-        scrollable && setIsScrollable(scrollable);
-      }
       if (e.key === 'Enter' && isSubmitting) {
         return;
       }
@@ -250,7 +238,6 @@ export default function useTextarea({
       filesLoading,
       enterToSend,
       submitOverride,
-      setIsScrollable,
       textAreaRef,
       submitButtonRef,
     ],

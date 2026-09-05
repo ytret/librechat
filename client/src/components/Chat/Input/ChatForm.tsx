@@ -75,7 +75,6 @@ const ChatForm = memo(function ChatForm({
   const localize = useLocalize();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [, setIsScrollable] = useState(false);
   const [visualRowCount, setVisualRowCount] = useState(1);
   const [isTextAreaFocused, setIsTextAreaFocused] = useState(false);
   const [backupBadges, setBackupBadges] = useState<Pick<BadgeItem, 'id'>[]>([]);
@@ -186,7 +185,6 @@ const ChatForm = memo(function ChatForm({
   } = useTextarea({
     textAreaRef,
     submitButtonRef,
-    setIsScrollable,
     disabled: disableInputs,
     placeholder,
   });
