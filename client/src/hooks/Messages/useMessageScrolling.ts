@@ -142,18 +142,12 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       }
     }
 
-    if (messagesEndRef.current && scrollableRef.current) {
-      const observer = new IntersectionObserver(
-        ([entry]) => {
-          isNearBottomRef.current = entry.isIntersecting;
-          debouncedSetShowScrollButton(!entry.isIntersecting);
-        },
-        { root: scrollableRef.current, threshold, rootMargin: nearBottomRootMargin },
-      );
-      observer.observe(messagesEndRef.current);
-      return () => observer.disconnect();
-    }
-  }, [debouncedSetShowScrollButton, scrollToBottom, setAbortScroll]);
+    // NOTE: the persistent IntersectionObserver set up in the mount effect already
+    // keeps `isNearBottomRef` and the scroll button in sync whenever the end marker
+    // enters/leaves the viewport. Creating a fresh observer here on every scroll event
+    // was redundant and leaked observers (their disconnect return value is discarded by
+    // the event system). See ai-reports/02-stutter.md, Candidate D.
+  }, [scrollToBottom, setAbortScroll]);
 
   const clampScrollToContent = useCallback(() => {
     const scrollEl = scrollableRef.current;
