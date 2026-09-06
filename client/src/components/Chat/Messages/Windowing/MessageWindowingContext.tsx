@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
 import { estimateMessageHeight } from './messageHeightEstimate';
 import type { MessageWindowingContextValue, PinReason, RowRegistration, RowToken } from './types';
+import { MESSAGE_CONTENT_LAYOUT_CHANGE_EVENT } from '~/hooks/Messages/messageLayout';
 
 export const OVERSCAN_PX = 1200;
 export const UNMOUNT_HYSTERESIS_PX = 2400;
@@ -266,13 +267,25 @@ export function MessageWindowingProvider({
         if (row && !selectionPins.has(row.token)) selectionPins.set(row.token, pinRow(row.token, 'selection'));
       });
     };
+    const onLayoutChange = (event: Event) => {
+      const target = event.target;
+      const shell = target instanceof Element ? target.closest<HTMLElement>('[data-message-virtual-row="true"]') : null;
+      const row = shell ? [...rows.current.values()].find((candidate) => candidate.element === shell) : undefined;
+      if (row) {
+        row.measured = false;
+        row.height = estimateMessageHeight(row.message);
+      }
+      schedule();
+    };
     root.addEventListener('scroll', schedule, { passive: true });
+    root.addEventListener(MESSAGE_CONTENT_LAYOUT_CHANGE_EVENT, onLayoutChange);
     window.addEventListener('resize', onResize);
     document.addEventListener('keydown', onFind, true);
     document.addEventListener('selectionchange', onSelectionChange);
     schedule();
     return () => {
       root.removeEventListener('scroll', schedule);
+      root.removeEventListener(MESSAGE_CONTENT_LAYOUT_CHANGE_EVENT, onLayoutChange);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onFind, true);
       document.removeEventListener('selectionchange', onSelectionChange);

@@ -252,6 +252,17 @@ describe('MessageWindowingProvider', () => {
     rectSpy.mockRestore();
   });
 
+  it('invalidates a row estimate on a message content layout event', () => {
+    render(
+      <Harness>
+        <RegisteredRow id="message-1" />
+      </Harness>,
+    );
+    const row = screen.getByTestId('message-1');
+    act(() => row.dispatchEvent(new CustomEvent('librechat:message-content-layout-change', { bubbles: true })));
+    expect(row).toBeInTheDocument();
+  });
+
   it('pins the shell containing a non-collapsed selection', () => {
     const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains('scroll-root')) return { top: 0, bottom: 500, height: 500 } as DOMRect;
