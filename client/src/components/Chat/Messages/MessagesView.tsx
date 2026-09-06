@@ -39,24 +39,28 @@ function MessagesViewContent({
   const { conversationId } = conversation ?? {};
 
   return (
-    <MessageWindowingProvider key={conversationId ?? 'no-conversation'} scrollableRef={scrollableRef} conversationId={conversationId}>
-    <MessagesViewBody
-      messagesTree={_messagesTree}
-      localize={localize}
-      fontSize={fontSize}
-      screenshotTargetRef={screenshotTargetRef}
-      scrollButtonPreference={scrollButtonPreference}
-      currentEditId={currentEditId}
-      setCurrentEditId={setCurrentEditId}
-      scrollToBottomRef={scrollToBottomRef}
+    <MessageWindowingProvider
+      key={conversationId ?? 'no-conversation'}
       scrollableRef={scrollableRef}
-      contentRef={contentRef}
-      messagesEndRef={messagesEndRef}
-      showScrollButton={showScrollButton}
-      handleSmoothToRef={handleSmoothToRef}
-      debouncedHandleScroll={debouncedHandleScroll}
       conversationId={conversationId}
-    />
+    >
+      <MessagesViewBody
+        messagesTree={_messagesTree}
+        localize={localize}
+        fontSize={fontSize}
+        screenshotTargetRef={screenshotTargetRef}
+        scrollButtonPreference={scrollButtonPreference}
+        currentEditId={currentEditId}
+        setCurrentEditId={setCurrentEditId}
+        scrollToBottomRef={scrollToBottomRef}
+        scrollableRef={scrollableRef}
+        contentRef={contentRef}
+        messagesEndRef={messagesEndRef}
+        showScrollButton={showScrollButton}
+        handleSmoothToRef={handleSmoothToRef}
+        debouncedHandleScroll={debouncedHandleScroll}
+        conversationId={conversationId}
+      />
     </MessageWindowingProvider>
   );
 }
@@ -79,12 +83,31 @@ type MessagesViewBodyProps = {
   conversationId?: string | null;
 };
 
-function MessagesViewBody({ messagesTree, localize, fontSize, screenshotTargetRef, scrollButtonPreference, currentEditId, setCurrentEditId, scrollToBottomRef, scrollableRef, contentRef, messagesEndRef, showScrollButton, handleSmoothToRef, debouncedHandleScroll, conversationId }: MessagesViewBodyProps) {
+function MessagesViewBody({
+  messagesTree,
+  localize,
+  fontSize,
+  screenshotTargetRef,
+  scrollButtonPreference,
+  currentEditId,
+  setCurrentEditId,
+  scrollToBottomRef,
+  scrollableRef,
+  contentRef,
+  messagesEndRef,
+  showScrollButton,
+  handleSmoothToRef,
+  debouncedHandleScroll,
+  conversationId,
+}: MessagesViewBodyProps) {
   const { materializeAll } = useMessageWindowing();
   const { registerMaterializer } = useScreenshot();
-  useEffect(() => registerMaterializer?.(() => materializeAll('screenshot')), [registerMaterializer, materializeAll]);
+  useEffect(
+    () => registerMaterializer?.(() => materializeAll('screenshot')),
+    [registerMaterializer, materializeAll],
+  );
   return (
-      <>
+    <>
       <div className="relative flex-1 overflow-hidden overflow-y-auto">
         <div className="relative h-full">
           <div

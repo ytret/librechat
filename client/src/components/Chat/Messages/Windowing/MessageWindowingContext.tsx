@@ -11,15 +11,27 @@ type Row = RowRegistration & {
   mounted: boolean;
   height: number;
   measured: boolean;
+  /** True after a placeholder→mounted transition. The first measurement that
+   *  arrives while this is set replaces the estimate and must apply anchor
+   *  correction. Initially/force-mounted rows never set this, so their first
+   *  measurement establishes a baseline without correcting. */
+  pendingAnchorCorrection: boolean;
   pins: Set<PinReason>;
   waiters: Array<(el: HTMLElement | null) => void>;
+  measureWaiters: Array<() => void>;
 };
 
 export const MessageWindowingContext = createContext<MessageWindowingContextValue | null>(null);
 const Context = MessageWindowingContext;
 
 function getScrollRoot(ref: React.RefObject<HTMLElement>): HTMLElement | null {
-  return ref.current ?? [...document.querySelectorAll<HTMLElement>('.scrollbar-gutter-stable')].find((node) => node.querySelector('#messages-end')) ?? null;
+  return (
+    ref.current ??
+    [...document.querySelectorAll<HTMLElement>('.scrollbar-gutter-stable')].find((node) =>
+      node.querySelector('#messages-end'),
+    ) ??
+    null
+  );
 }
 
 export function MessageWindowingProvider({
@@ -45,6 +57,12 @@ export function MessageWindowingProvider({
   const setMounted = useCallback((row: Row, value: boolean) => {
     if (row.mounted === value) return;
     row.mounted = value;
+    if (value) {
+      // Placeholder → mounted: the shell's layout height is about to change
+      // from its cached/estimated height to real content, so the next
+      // measurement is an estimate→measured correction candidate.
+      row.pendingAnchorCorrection = true;
+    }
     // Hand the row its latest measured height when it becomes a placeholder so
     // the placeholder preserves real geometry rather than falling back to the
     // estimate. Mounting uses automatic height and therefore passes nothing.
@@ -69,8 +87,11 @@ export function MessageWindowingProvider({
           return;
         }
         const box = row.element.getBoundingClientRect();
-        const near = box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
-        const far = box.bottom < bounds.top - UNMOUNT_HYSTERESIS_PX || box.top > bounds.bottom + UNMOUNT_HYSTERESIS_PX;
+        const near =
+          box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
+        const far =
+          box.bottom < bounds.top - UNMOUNT_HYSTERESIS_PX ||
+          box.top > bounds.bottom + UNMOUNT_HYSTERESIS_PX;
         if (near) decisions.push({ row, mount: true });
         else if (far) decisions.push({ row, mount: false });
       });
@@ -78,73 +99,91 @@ export function MessageWindowingProvider({
     });
   }, [scrollableRef, setMounted]);
 
-  const reportHeight = useCallback((token: RowToken, rawHeight: number) => {
-    const row = rows.current.get(token);
-    if (!row || rawHeight <= 0) return;
-    const height = Math.round(rawHeight * 10) / 10;
-    // The first real measurement replaces the placeholder/estimate. Apply the
-    // same explicit anchor correction as later changes so that a materialized
-    // row above the viewport cannot shift content under the user's eyes.
-    const oldHeight = row.height;
-    const delta = height - oldHeight;
-    row.measured = true;
-    row.height = height;
-    if (Math.abs(delta) < 0.1) return;
-    const root = getScrollRoot(scrollableRef);
-    const box = row.element?.getBoundingClientRect();
-    const rootBox = root?.getBoundingClientRect();
-    const atBottom = root ? root.scrollHeight - root.scrollTop - root.clientHeight < 4 : false;
-    // A replacement above the viewport changes the scroll coordinate of everything below it.
-    // Accumulate corrections so a stream or a batch of ResizeObserver entries writes once.
-    if (root && box && rootBox && box.bottom <= rootBox.top && !atBottom) {
-      pendingCorrection.current += delta;
-      if (correctionFrame.current == null) {
-        correctionFrame.current = requestAnimationFrame(() => {
-          correctionFrame.current = undefined;
-          const correction = pendingCorrection.current;
-          pendingCorrection.current = 0;
-          if (correction && root.isConnected) root.scrollTop += correction;
-        });
+  const reportHeight = useCallback(
+    (token: RowToken, rawHeight: number) => {
+      const row = rows.current.get(token);
+      if (!row || rawHeight <= 0) return;
+      const height = Math.round(rawHeight * 10) / 10;
+      const firstMeasurement = !row.measured;
+      const oldHeight = row.height;
+      const delta = height - oldHeight;
+      row.measured = true;
+      row.height = height;
+      // Signal any pending navigation that a real measurement is now available.
+      row.measureWaiters.splice(0).forEach((resolve) => resolve());
+      if (firstMeasurement && !row.pendingAnchorCorrection) {
+        // A row mounted from its very first render already had its real DOM
+        // height participating in layout. Recording that measurement changes
+        // nothing on the page, so establish the baseline without any correction.
+        // Correcting `measured - estimate` here would create an artificial jump.
+        return;
       }
-    }
-  }, [scrollableRef]);
+      row.pendingAnchorCorrection = false;
+      if (Math.abs(delta) < 0.1) return;
+      const root = getScrollRoot(scrollableRef);
+      const box = row.element?.getBoundingClientRect();
+      const rootBox = root?.getBoundingClientRect();
+      const atBottom = root ? root.scrollHeight - root.scrollTop - root.clientHeight < 4 : false;
+      // A replacement above the viewport changes the scroll coordinate of everything below it.
+      // Accumulate corrections so a stream or a batch of ResizeObserver entries writes once.
+      if (root && box && rootBox && box.bottom <= rootBox.top && !atBottom) {
+        pendingCorrection.current += delta;
+        if (correctionFrame.current == null) {
+          correctionFrame.current = requestAnimationFrame(() => {
+            correctionFrame.current = undefined;
+            const correction = pendingCorrection.current;
+            pendingCorrection.current = 0;
+            if (correction && root.isConnected) root.scrollTop += correction;
+          });
+        }
+      }
+    },
+    [scrollableRef],
+  );
 
-  const registerRow = useCallback((registration: RowRegistration) => {
-    const row: Row = {
-      ...registration,
-      mounted: registration.forceMounted,
-      height: estimateMessageHeight(registration.message),
-      measured: false,
-      pins: new Set(),
-      waiters: [],
-    };
-    rows.current.set(registration.token, row);
-    byId.current.set(registration.id, row);
-    if (registration.element) elementToRow.current.set(registration.element, row);
-    const root = getScrollRoot(scrollableRef);
-    if (!registration.forceMounted && registration.element && root) {
-      const bounds = root.getBoundingClientRect();
-      const box = registration.element.getBoundingClientRect();
-      const initiallyNear = box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
-      if (initiallyNear) setMounted(row, true);
-    }
-    if (observer.current && registration.element) observer.current.observe(registration.element);
-    if (resize.current && registration.element) resize.current.observe(registration.element);
-    schedule();
-    return () => {
-      if (registration.element) {
-        observer.current?.unobserve(registration.element);
-        resize.current?.unobserve(registration.element);
-        elementToRow.current.delete(registration.element);
+  const registerRow = useCallback(
+    (registration: RowRegistration) => {
+      const row: Row = {
+        ...registration,
+        mounted: registration.forceMounted,
+        height: estimateMessageHeight(registration.message),
+        measured: false,
+        pendingAnchorCorrection: false,
+        pins: new Set(),
+        waiters: [],
+        measureWaiters: [],
+      };
+      rows.current.set(registration.token, row);
+      byId.current.set(registration.id, row);
+      if (registration.element) elementToRow.current.set(registration.element, row);
+      const root = getScrollRoot(scrollableRef);
+      if (!registration.forceMounted && registration.element && root) {
+        const bounds = root.getBoundingClientRect();
+        const box = registration.element.getBoundingClientRect();
+        const initiallyNear =
+          box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
+        if (initiallyNear) setMounted(row, true);
       }
-      rows.current.delete(registration.token);
-      const navigationTimer = navigationTimers.current.get(registration.token);
-      if (navigationTimer) clearTimeout(navigationTimer);
-      navigationTimers.current.delete(registration.token);
-      if (byId.current.get(registration.id) === row) byId.current.delete(registration.id);
-      row.waiters.splice(0).forEach((resolve) => resolve(null));
-    };
-  }, [schedule, scrollableRef, setMounted]);
+      if (observer.current && registration.element) observer.current.observe(registration.element);
+      if (resize.current && registration.element) resize.current.observe(registration.element);
+      schedule();
+      return () => {
+        if (registration.element) {
+          observer.current?.unobserve(registration.element);
+          resize.current?.unobserve(registration.element);
+          elementToRow.current.delete(registration.element);
+        }
+        rows.current.delete(registration.token);
+        const navigationTimer = navigationTimers.current.get(registration.token);
+        if (navigationTimer) clearTimeout(navigationTimer);
+        navigationTimers.current.delete(registration.token);
+        if (byId.current.get(registration.id) === row) byId.current.delete(registration.id);
+        row.waiters.splice(0).forEach((resolve) => resolve(null));
+        row.measureWaiters.splice(0).forEach((resolve) => resolve());
+      };
+    },
+    [schedule, scrollableRef, setMounted],
+  );
 
   const updateRowId = useCallback((token: RowToken, oldId: string, newId: string) => {
     const row = rows.current.get(token);
@@ -154,77 +193,115 @@ export function MessageWindowingProvider({
     byId.current.set(newId, row);
   }, []);
 
-  const updateRowState = useCallback((token: RowToken, message: RowRegistration['message'], forceMounted: boolean) => {
-    const row = rows.current.get(token);
-    if (!row) return;
-    const forceChanged = row.forceMounted !== forceMounted;
-    // Historical edits invalidate the placeholder estimate. Streaming rows stay
-    // measured continuously by ResizeObserver and must not reset on every token.
-    if (row.message !== message && !row.forceMounted && !forceMounted) {
-      row.measured = false;
-      row.height = estimateMessageHeight(message);
-    }
-    row.message = message;
-    row.forceMounted = forceMounted;
-    if (forceMounted) setMounted(row, true);
-    else if (forceChanged) schedule();
-  }, [schedule, setMounted]);
+  const updateRowState = useCallback(
+    (token: RowToken, message: RowRegistration['message'], forceMounted: boolean) => {
+      const row = rows.current.get(token);
+      if (!row) return;
+      const forceChanged = row.forceMounted !== forceMounted;
+      // Historical edits invalidate the placeholder estimate. Streaming rows stay
+      // measured continuously by ResizeObserver and must not reset on every token.
+      if (row.message !== message && !row.forceMounted && !forceMounted) {
+        row.measured = false;
+        row.height = estimateMessageHeight(message);
+        // This is a content/edit invalidation, not a placeholder→mounted
+        // transition, so the next measurement must not trigger an estimate
+        // anchor correction.
+        row.pendingAnchorCorrection = false;
+      }
+      row.message = message;
+      row.forceMounted = forceMounted;
+      if (forceMounted) setMounted(row, true);
+      else if (forceChanged) schedule();
+    },
+    [schedule, setMounted],
+  );
 
   const isMounted = useCallback((token: RowToken) => rows.current.get(token)?.mounted ?? false, []);
 
-  const pinRow = useCallback((token: RowToken, reason: PinReason) => {
-    const row = rows.current.get(token);
-    if (!row) return () => {};
-    row.pins.add(reason);
-    setMounted(row, true);
-    return () => {
-      row.pins.delete(reason);
-      schedule();
-    };
-  }, [schedule, setMounted]);
+  const pinRow = useCallback(
+    (token: RowToken, reason: PinReason) => {
+      const row = rows.current.get(token);
+      if (!row) return () => {};
+      row.pins.add(reason);
+      setMounted(row, true);
+      return () => {
+        row.pins.delete(reason);
+        schedule();
+      };
+    },
+    [schedule, setMounted],
+  );
 
-  const ensureMessageMounted = useCallback(async (id: string) => {
-    const row = byId.current.get(id);
-    if (!row) return null;
-    row.pins.add('navigation');
-    setMounted(row, true);
-    const previousTimer = navigationTimers.current.get(row.token);
-    if (previousTimer) clearTimeout(previousTimer);
-    navigationTimers.current.set(row.token, setTimeout(() => {
-      row.pins.delete('navigation');
-      navigationTimers.current.delete(row.token);
-      schedule();
-    }, 2500));
-    if (!row.element) return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
-    // The shell is already present, but the expensive subtree is committed on the
-    // next React turn. Let it render and measure before navigation reads geometry.
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    return row.element;
-  }, [schedule, setMounted]);
+  const ensureMessageMounted = useCallback(
+    async (id: string) => {
+      const row = byId.current.get(id);
+      if (!row) return null;
+      row.pins.add('navigation');
+      setMounted(row, true);
+      const previousTimer = navigationTimers.current.get(row.token);
+      if (previousTimer) clearTimeout(previousTimer);
+      navigationTimers.current.set(
+        row.token,
+        setTimeout(() => {
+          row.pins.delete('navigation');
+          navigationTimers.current.delete(row.token);
+          schedule();
+        }, 2500),
+      );
+      if (!row.element)
+        return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
+      // The shell is already present, but the expensive subtree is committed on the
+      // next React turn. Prefer waiting for a real ResizeObserver measurement so
+      // navigation reads exact geometry, bounded by a two-frame fallback in case
+      // measurement never arrives (e.g. a zero-size or fixed-height target).
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        if (row.measured) {
+          done();
+          return;
+        }
+        row.measureWaiters.push(done);
+        requestAnimationFrame(() => requestAnimationFrame(done));
+      });
+      return row.element;
+    },
+    [schedule, setMounted],
+  );
 
-  const materializeAll = useCallback(async (reason: 'screenshot' | 'find' | 'debug') => {
-    const root = getScrollRoot(scrollableRef);
-    const previousScrollTop = root?.scrollTop;
-    materialized.current = true;
-    rows.current.forEach((row) => setMounted(row, true));
-    const cleanup = () => {
-      // Native find has no close event. Keep the complete DOM until the conversation changes.
-      if (reason === 'find') return;
-      materialized.current = false;
-      if (root && previousScrollTop != null) root.scrollTop = previousScrollTop;
-      schedule();
-    };
-    try {
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      if (typeof document.fonts?.ready?.then === 'function') await document.fonts.ready;
-    } catch (err) {
-      // If settling fails, still restore normal windowing rather than leaving every
-      // row mounted, then propagate the error to the caller.
-      cleanup();
-      throw err;
-    }
-    return cleanup;
-  }, [schedule, scrollableRef, setMounted]);
+  const materializeAll = useCallback(
+    async (reason: 'screenshot' | 'find' | 'debug') => {
+      const root = getScrollRoot(scrollableRef);
+      const previousScrollTop = root?.scrollTop;
+      materialized.current = true;
+      rows.current.forEach((row) => setMounted(row, true));
+      const cleanup = () => {
+        // Native find has no close event. Keep the complete DOM until the conversation changes.
+        if (reason === 'find') return;
+        materialized.current = false;
+        if (root && previousScrollTop != null) root.scrollTop = previousScrollTop;
+        schedule();
+      };
+      try {
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+        if (typeof document.fonts?.ready?.then === 'function') await document.fonts.ready;
+      } catch (err) {
+        // If settling fails, still restore normal windowing rather than leaving every
+        // row mounted, then propagate the error to the caller.
+        cleanup();
+        throw err;
+      }
+      return cleanup;
+    },
+    [schedule, scrollableRef, setMounted],
+  );
 
   // Browser find must have text present in the DOM before the native default
   // action runs, so materialization is committed synchronously at the event
@@ -236,31 +313,56 @@ export function MessageWindowingProvider({
     });
   }, [setMounted]);
 
-  const value = useMemo(() => ({
-    registerRow,
-    updateRowId,
-    updateRowState,
-    reportHeight,
-    isMounted,
-    pinRow,
-    ensureMessageMounted,
-    materializeAll,
-    notifyLayoutChange: schedule,
-  }), [registerRow, updateRowId, updateRowState, reportHeight, isMounted, pinRow, ensureMessageMounted, materializeAll, schedule]);
+  const value = useMemo(
+    () => ({
+      registerRow,
+      updateRowId,
+      updateRowState,
+      reportHeight,
+      isMounted,
+      pinRow,
+      ensureMessageMounted,
+      materializeAll,
+      notifyLayoutChange: schedule,
+    }),
+    [
+      registerRow,
+      updateRowId,
+      updateRowState,
+      reportHeight,
+      isMounted,
+      pinRow,
+      ensureMessageMounted,
+      materializeAll,
+      schedule,
+    ],
+  );
 
   useEffect(() => {
     const root = getScrollRoot(scrollableRef);
     if (!root) return;
     materialized.current = false;
-    observer.current = typeof IntersectionObserver !== 'undefined'
-      ? new IntersectionObserver(schedule, { root, rootMargin: `${OVERSCAN_PX}px 0px`, threshold: 0 })
-      : undefined;
-    resize.current = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver((entries) => entries.forEach((entry) => {
-          const row = elementToRow.current.get(entry.target);
-          if (row) reportHeight(row.token, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
-        }))
-      : undefined;
+    observer.current =
+      typeof IntersectionObserver !== 'undefined'
+        ? new IntersectionObserver(schedule, {
+            root,
+            rootMargin: `${OVERSCAN_PX}px 0px`,
+            threshold: 0,
+          })
+        : undefined;
+    resize.current =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver((entries) =>
+            entries.forEach((entry) => {
+              const row = elementToRow.current.get(entry.target);
+              if (row)
+                reportHeight(
+                  row.token,
+                  entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height,
+                );
+            }),
+          )
+        : undefined;
     // Child effects can register rows before this provider effect creates the
     // observers. Attach those already-mounted shells as well.
     rows.current.forEach((row) => {
@@ -279,6 +381,7 @@ export function MessageWindowingProvider({
       rows.current.forEach((row) => {
         row.measured = false;
         row.height = estimateMessageHeight(row.message);
+        row.pendingAnchorCorrection = false;
       });
       schedule();
     };
@@ -289,21 +392,27 @@ export function MessageWindowingProvider({
       const selection = document.getSelection();
       if (!selection || selection.isCollapsed) return;
       [selection.anchorNode, selection.focusNode].forEach((node) => {
-        const shell = node instanceof Element
-          ? node.closest<HTMLElement>('[data-message-virtual-row="true"]')
-          : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
+        const shell =
+          node instanceof Element
+            ? node.closest<HTMLElement>('[data-message-virtual-row="true"]')
+            : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
         if (!shell) return;
         const row = elementToRow.current.get(shell);
-        if (row && !selectionPins.has(row.token)) selectionPins.set(row.token, pinRow(row.token, 'selection'));
+        if (row && !selectionPins.has(row.token))
+          selectionPins.set(row.token, pinRow(row.token, 'selection'));
       });
     };
     const onLayoutChange = (event: Event) => {
       const target = event.target;
-      const shell = target instanceof Element ? target.closest<HTMLElement>('[data-message-virtual-row="true"]') : null;
+      const shell =
+        target instanceof Element
+          ? target.closest<HTMLElement>('[data-message-virtual-row="true"]')
+          : null;
       const row = shell ? elementToRow.current.get(shell) : undefined;
       if (row) {
         row.measured = false;
         row.height = estimateMessageHeight(row.message);
+        row.pendingAnchorCorrection = false;
       }
       schedule();
     };

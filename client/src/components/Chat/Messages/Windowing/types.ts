@@ -1,6 +1,14 @@
 import type { TMessage } from 'librechat-data-provider';
 
-export type PinReason = 'latest' | 'submitting' | 'editing' | 'focus' | 'selection' | 'navigation' | 'interaction' | 'materialize';
+export type PinReason =
+  | 'latest'
+  | 'submitting'
+  | 'editing'
+  | 'focus'
+  | 'selection'
+  | 'navigation'
+  | 'interaction'
+  | 'materialize';
 export type RowToken = symbol;
 export type RowRegistration = {
   token: RowToken;

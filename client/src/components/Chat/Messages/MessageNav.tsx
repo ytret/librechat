@@ -285,11 +285,12 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
       // Allocate the request token before any await so a slower, older request
       // cannot resolve after a newer one and either cancel it or steal focus.
       const token = ++scrollTokenRef.current;
-      const el = id === MESSAGES_END_ID
-        ? resolveEntryEl(id)
-        : windowing
-          ? await windowing.ensureMessageMounted(id)
-          : resolveEntryEl(id);
+      let el: HTMLElement | null;
+      if (id === MESSAGES_END_ID || !windowing) {
+        el = resolveEntryEl(id);
+      } else {
+        el = await windowing.ensureMessageMounted(id);
+      }
       if (token !== scrollTokenRef.current || !el) {
         return false;
       }
@@ -335,11 +336,12 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
   const scrollToImmediate = useCallback(
     async (id: string) => {
       const token = ++scrollTokenRef.current;
-      const el = id === MESSAGES_END_ID
-        ? resolveEntryEl(id)
-        : windowing
-          ? await windowing.ensureMessageMounted(id)
-          : resolveEntryEl(id);
+      let el: HTMLElement | null;
+      if (id === MESSAGES_END_ID || !windowing) {
+        el = resolveEntryEl(id);
+      } else {
+        el = await windowing.ensureMessageMounted(id);
+      }
       if (token !== scrollTokenRef.current || !el) {
         return;
       }
