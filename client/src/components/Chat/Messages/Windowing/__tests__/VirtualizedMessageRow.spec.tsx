@@ -10,9 +10,11 @@ jest.mock('~/hooks', () => ({
 jest.mock('~/utils', () => ({
   getMessageAriaLabel: () => 'message label',
 }));
+let mockLatestMessageId: string | null = null;
+let mockIsSubmitting = false;
 jest.mock('~/Providers', () => ({
-  useMessagesState: () => ({ latestMessageId: null }),
-  useMessagesSubmission: () => ({ isSubmitting: false }),
+  useMessagesState: () => ({ latestMessageId: mockLatestMessageId }),
+  useMessagesSubmission: () => ({ isSubmitting: mockIsSubmitting }),
 }));
 
 const message = (id: string, text = id) => ({
@@ -66,6 +68,8 @@ describe('VirtualizedMessageRow', () => {
     global.IntersectionObserver = originalIO;
     global.ResizeObserver = originalRO;
     global.requestAnimationFrame = originalRAF;
+    mockLatestMessageId = null;
+    mockIsSubmitting = false;
   });
 
   it('keeps the public shell identity on the wrapper and renders content when mounted', () => {
@@ -119,6 +123,21 @@ describe('VirtualizedMessageRow', () => {
     expect(document.getElementById('client-id')).toBeNull();
     expect(document.getElementById('server-id')).toBeInTheDocument();
     expect(screen.getByTestId('stable-content')).toBe(content);
+  });
+
+  it('keeps the latest submitting row mounted while it is far away', () => {
+    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('scrollbar-gutter-stable')
+        ? ({ top: 0, bottom: 500, height: 500 } as DOMRect)
+        : ({ top: 5000, bottom: 5100, height: 100 } as DOMRect);
+    });
+    mockLatestMessageId = 'message-1';
+    mockIsSubmitting = true;
+    renderRow(false);
+    const shell = document.getElementById('message-1');
+    expect(shell).toHaveAttribute('data-message-mounted', 'true');
+    expect(screen.getByTestId('expensive-content')).toBeInTheDocument();
+    rectSpy.mockRestore();
   });
 
   it('pins a mounted row briefly when it receives pointer interaction', () => {
