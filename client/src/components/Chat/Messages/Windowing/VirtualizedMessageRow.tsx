@@ -27,7 +27,10 @@ export function VirtualizedMessageRow({ messageId, message, forceMounted = false
   useEffect(() => { if (previousId.current !== messageId) { updateRowId(token.current, previousId.current, messageId); previousId.current = messageId; } }, [messageId, updateRowId]);
   useEffect(() => {
     updateRowState(token.current, message, forceMounted || latestPinned);
-  }, [message, forceMounted, latestPinned, updateRowState]);
+    // Keep an unmounted shell in sync with content edits. Mounted rows retain
+    // their measured height and let ResizeObserver provide the authoritative value.
+    if (!mounted) height.current = estimateMessageHeight(message);
+  }, [message, forceMounted, latestPinned, mounted, updateRowState]);
   useEffect(() => { const node = elementRef.current; if (!node || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(([entry]) => { const value = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height; if (value > 0) { height.current = value; reportHeight(token.current, value); } }); observer.observe(node); return () => observer.disconnect(); }, [reportHeight]);
   useEffect(() => {
     const node = elementRef.current;
