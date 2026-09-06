@@ -312,19 +312,19 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
 
   const scrollToImmediate = useCallback(
     async (id: string) => {
+      const token = ++scrollTokenRef.current;
       const el = id === MESSAGES_END_ID
         ? resolveEntryEl(id)
         : windowing
           ? await windowing.ensureMessageMounted(id)
           : resolveEntryEl(id);
-      if (!el) {
+      if (token !== scrollTokenRef.current || !el) {
         return;
       }
       const container = el.closest<HTMLElement>('.scrollbar-gutter-stable');
       if (!container) {
         return;
       }
-      scrollTokenRef.current++;
       const scrollMargin = scrollMarginRef.current || readScrollMargin(el);
       container.scrollTop = computeTargetScroll(container, el, scrollMargin);
     },
