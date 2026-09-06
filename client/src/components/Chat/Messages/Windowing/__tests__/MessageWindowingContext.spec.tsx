@@ -47,7 +47,7 @@ function RegisteredRow({ id, forceMounted = false }: { id: string; forceMounted?
     [forceMounted, id, windowing],
   );
   return (
-    <div ref={element} data-testid={id} data-mounted={mounted ? 'true' : 'false'}>
+    <div ref={element} data-testid={id} data-message-virtual-row="true" data-mounted={mounted ? 'true' : 'false'}>
       {mounted ? <span data-testid={`${id}-content`}>expensive content</span> : null}
     </div>
   );
@@ -225,5 +225,55 @@ describe('MessageWindowingProvider', () => {
     });
     expect(screen.getByTestId('message-1-content')).toBeInTheDocument();
     expect(screen.getByTestId('message-2-content')).toBeInTheDocument();
+  });
+
+  it('restores the previous windowing policy when materialization cleanup runs', async () => {
+    const rootRect = { top: 0, bottom: 500, height: 500 } as DOMRect;
+    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('scroll-root')) return rootRect;
+      return { top: 5000, bottom: 5100, height: 100 } as DOMRect;
+    });
+    let cleanup: (() => void) | undefined;
+    function Materializer() {
+      const { materializeAll } = useMessageWindowing();
+      return <button onClick={async () => { cleanup = await materializeAll('debug'); }}>materialize</button>;
+    }
+    render(
+      <Harness>
+        <RegisteredRow id="message-1" />
+        <Materializer />
+      </Harness>,
+    );
+    await act(async () => screen.getByRole('button', { name: 'materialize' }).click());
+    expect(screen.getByTestId('message-1-content')).toBeInTheDocument();
+    await act(async () => cleanup?.());
+    await act(async () => {});
+    expect(screen.getByTestId('message-1')).toBeInTheDocument();
+    rectSpy.mockRestore();
+  });
+
+  it('pins the shell containing a non-collapsed selection', () => {
+    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('scroll-root')) return { top: 0, bottom: 500, height: 500 } as DOMRect;
+      return { top: 5000, bottom: 5100, height: 100 } as DOMRect;
+    });
+    render(
+      <Harness>
+        <RegisteredRow id="message-1" />
+      </Harness>,
+    );
+    const row = screen.getByTestId('message-1');
+    const text = document.createTextNode('selected text');
+    row.appendChild(text);
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    act(() => document.dispatchEvent(new Event('selectionchange')));
+    expect(row).toHaveAttribute('data-mounted', 'true');
+    selection.removeAllRanges();
+    act(() => document.dispatchEvent(new Event('selectionchange')));
+    rectSpy.mockRestore();
   });
 });

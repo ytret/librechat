@@ -258,9 +258,11 @@ export function MessageWindowingProvider({
       const selection = document.getSelection();
       if (!selection || selection.isCollapsed) return;
       [selection.anchorNode, selection.focusNode].forEach((node) => {
-        const shell = node instanceof Element ? node.closest<HTMLElement>('[data-message-virtual-row="true"]') : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
+        const shell = node instanceof Element
+          ? node.closest<HTMLElement>('[data-message-virtual-row="true"]')
+          : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
         if (!shell) return;
-        const row = [...rows.current.values()].find((candidate) => candidate.element === shell);
+        const row = [...rows.current.values()].find((candidate) => candidate.element === shell || candidate.element?.contains(node));
         if (row && !selectionPins.has(row.token)) selectionPins.set(row.token, pinRow(row.token, 'selection'));
       });
     };
