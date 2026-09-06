@@ -6,6 +6,7 @@ export type RowRegistration = { token: RowToken; id: string; message: TMessage; 
 export type MessageWindowingContextValue = {
   registerRow: (registration: RowRegistration) => () => void;
   updateRowId: (token: RowToken, oldId: string, newId: string) => void;
+  updateRowState: (token: RowToken, message: TMessage, forceMounted: boolean) => void;
   reportHeight: (token: RowToken, height: number) => void;
   isMounted: (token: RowToken) => boolean;
   pinRow: (token: RowToken, reason: PinReason) => () => void;

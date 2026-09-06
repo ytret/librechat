@@ -9,7 +9,7 @@ import type { PinReason, RowToken } from './types';
 
 export function VirtualizedMessageRow({ messageId, message, forceMounted = false, ariaLabel, children }: { messageId: string; message: TMessage; forceMounted?: boolean; ariaLabel?: string; children: React.ReactNode }) {
   const localize = useLocalize();
-  const { registerRow, updateRowId, reportHeight, pinRow } = useMessageWindowing();
+  const { registerRow, updateRowId, updateRowState, reportHeight, pinRow } = useMessageWindowing();
   const { latestMessageId } = useMessagesState();
   const { isSubmitting } = useMessagesSubmission();
   const latestPinned = messageId === latestMessageId && isSubmitting;
@@ -25,9 +25,36 @@ export function VirtualizedMessageRow({ messageId, message, forceMounted = false
     return unregister;
   }, []); // positional reconciliation is intentional; identity is mutable below
   useEffect(() => { if (previousId.current !== messageId) { updateRowId(token.current, previousId.current, messageId); previousId.current = messageId; } }, [messageId, updateRowId]);
-  useEffect(() => { if (forceMounted || latestPinned) setMounted(true); }, [forceMounted, latestPinned]);
+  useEffect(() => {
+    updateRowState(token.current, message, forceMounted || latestPinned);
+  }, [message, forceMounted, latestPinned, updateRowState]);
   useEffect(() => { const node = elementRef.current; if (!node || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(([entry]) => { const value = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height; if (value > 0) { height.current = value; reportHeight(token.current, value); } }); observer.observe(node); return () => observer.disconnect(); }, [reportHeight]);
-  useEffect(() => { const node = elementRef.current; if (!node) return; const pin = (reason: PinReason) => pinRow(token.current, reason); const down = () => pin('interaction'); const focus = () => pin('focus'); node.addEventListener('pointerdown', down); node.addEventListener('focusin', focus); return () => { node.removeEventListener('pointerdown', down); node.removeEventListener('focusin', focus); }; }, [pinRow]);
+  useEffect(() => {
+    const node = elementRef.current;
+    if (!node) return;
+    let interactionRelease: (() => void) | undefined;
+    let focusRelease: (() => void) | undefined;
+    let interactionTimer: ReturnType<typeof setTimeout> | undefined;
+    const down = () => {
+      interactionRelease?.();
+      interactionRelease = pinRow(token.current, 'interaction');
+      if (interactionTimer) clearTimeout(interactionTimer);
+      interactionTimer = setTimeout(() => { interactionRelease?.(); interactionRelease = undefined; }, 1500);
+    };
+    const focus = () => { focusRelease?.(); focusRelease = pinRow(token.current, 'focus'); };
+    const blur = () => setTimeout(() => { if (!node.contains(document.activeElement)) { focusRelease?.(); focusRelease = undefined; } }, 0);
+    node.addEventListener('pointerdown', down);
+    node.addEventListener('focusin', focus);
+    node.addEventListener('focusout', blur);
+    return () => {
+      node.removeEventListener('pointerdown', down);
+      node.removeEventListener('focusin', focus);
+      node.removeEventListener('focusout', blur);
+      if (interactionTimer) clearTimeout(interactionTimer);
+      interactionRelease?.();
+      focusRelease?.();
+    };
+  }, [pinRow]);
 
   return <div ref={elementRef} id={messageId} aria-label={label} tabIndex={-1} className="message-render" data-message-virtual-row="true" data-message-mounted={mounted ? 'true' : 'false'} style={mounted ? undefined : { height: `${height.current}px`, overflowAnchor: 'none' }}>{mounted ? children : null}</div>;
 }
