@@ -33,6 +33,7 @@ export function MessageWindowingProvider({
   const frame = useRef<number>();
   const correctionFrame = useRef<number>();
   const pendingCorrection = useRef(0);
+  const navigationTimers = useRef(new Map<RowToken, ReturnType<typeof setTimeout>>());
   const materialized = useRef(false);
   const observer = useRef<IntersectionObserver>();
   const resize = useRef<ResizeObserver>();
@@ -124,6 +125,9 @@ export function MessageWindowingProvider({
         resize.current?.unobserve(registration.element);
       }
       rows.current.delete(registration.token);
+      const navigationTimer = navigationTimers.current.get(registration.token);
+      if (navigationTimer) clearTimeout(navigationTimer);
+      navigationTimers.current.delete(registration.token);
       if (byId.current.get(registration.id) === row) byId.current.delete(registration.id);
       row.waiters.splice(0).forEach((resolve) => resolve(null));
     };
@@ -169,13 +173,21 @@ export function MessageWindowingProvider({
   const ensureMessageMounted = useCallback(async (id: string) => {
     const row = byId.current.get(id);
     if (!row) return null;
+    row.pins.add('navigation');
     setMounted(row, true);
+    const previousTimer = navigationTimers.current.get(row.token);
+    if (previousTimer) clearTimeout(previousTimer);
+    navigationTimers.current.set(row.token, setTimeout(() => {
+      row.pins.delete('navigation');
+      navigationTimers.current.delete(row.token);
+      schedule();
+    }, 2500));
     if (!row.element) return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
     // The shell is already present, but the expensive subtree is committed on the
     // next React turn. Let it render and measure before navigation reads geometry.
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     return row.element;
-  }, [setMounted]);
+  }, [schedule, setMounted]);
 
   const materializeAll = useCallback(async (reason: 'screenshot' | 'find' | 'debug') => {
     const root = getScrollRoot(scrollableRef);
@@ -268,6 +280,8 @@ export function MessageWindowingProvider({
       resize.current?.disconnect();
       if (frame.current != null) cancelAnimationFrame(frame.current);
       if (correctionFrame.current != null) cancelAnimationFrame(correctionFrame.current);
+      navigationTimers.current.forEach((timer) => clearTimeout(timer));
+      navigationTimers.current.clear();
       rows.current.clear();
       byId.current.clear();
     };

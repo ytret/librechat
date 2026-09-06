@@ -348,7 +348,7 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
         suppressClickRef.current = false;
         return;
       }
-      scrollToStart(id);
+      void scrollToStart(id);
       if (id !== MESSAGES_END_ID) {
         focusMessage(id);
       }
