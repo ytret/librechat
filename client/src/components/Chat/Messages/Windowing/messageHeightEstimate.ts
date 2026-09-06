@@ -15,7 +15,10 @@ function textOf(value: unknown): string {
 export function estimateMessageHeight(message: TMessage): number {
   const text = textOf(message.text) + ' ' + textOf(message.content);
   const chrome = message.isCreatedByUser ? 80 : 140;
-  let estimate = chrome + Math.max(1, Math.ceil(text.length / 90)) * 24;
+  let estimate = Math.max(
+    message.isCreatedByUser ? DEFAULT_USER_MESSAGE_HEIGHT : DEFAULT_ASSISTANT_MESSAGE_HEIGHT,
+    chrome + Math.max(1, Math.ceil(text.length / 90)) * 24,
+  );
   if (message.attachments?.length) estimate += 96;
   if ('tool_call_id' in message || 'tools' in message) estimate += 64;
   return Math.max(MIN_ESTIMATED_HEIGHT, Math.min(MAX_ESTIMATED_HEIGHT, estimate));

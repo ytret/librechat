@@ -154,8 +154,11 @@ export function MessageWindowingProvider({
     const row = byId.current.get(id);
     if (!row) return null;
     setMounted(row, true);
-    if (row.element) return row.element;
-    return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
+    if (!row.element) return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
+    // The shell is already present, but the expensive subtree is committed on the
+    // next React turn. Let it render and measure before navigation reads geometry.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    return row.element;
   }, [setMounted]);
 
   const materializeAll = useCallback(async (reason: 'screenshot' | 'find' | 'debug') => {
@@ -189,6 +192,7 @@ export function MessageWindowingProvider({
   useEffect(() => {
     const root = getScrollRoot(scrollableRef);
     if (!root) return;
+    materialized.current = false;
     observer.current = typeof IntersectionObserver !== 'undefined'
       ? new IntersectionObserver(schedule, { root, rootMargin: `${OVERSCAN_PX}px 0px`, threshold: 0 })
       : undefined;
@@ -201,12 +205,42 @@ export function MessageWindowingProvider({
     const onFind = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') void materializeAll('find');
     };
+    let previousWidth = root.clientWidth;
+    const onResize = () => {
+      const width = root.clientWidth;
+      if (Math.abs(width - previousWidth) < 16) return;
+      previousWidth = width;
+      rows.current.forEach((row) => {
+        row.measured = false;
+        row.height = estimateMessageHeight(row.message);
+      });
+      schedule();
+    };
+    const selectionPins = new Map<RowToken, () => void>();
+    const onSelectionChange = () => {
+      selectionPins.forEach((release) => release());
+      selectionPins.clear();
+      const selection = document.getSelection();
+      if (!selection || selection.isCollapsed) return;
+      [selection.anchorNode, selection.focusNode].forEach((node) => {
+        const shell = node instanceof Element ? node.closest<HTMLElement>('[data-message-virtual-row="true"]') : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
+        if (!shell) return;
+        const row = [...rows.current.values()].find((candidate) => candidate.element === shell);
+        if (row && !selectionPins.has(row.token)) selectionPins.set(row.token, pinRow(row.token, 'selection'));
+      });
+    };
     root.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', onResize);
     document.addEventListener('keydown', onFind, true);
+    document.addEventListener('selectionchange', onSelectionChange);
     schedule();
     return () => {
       root.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', onResize);
       document.removeEventListener('keydown', onFind, true);
+      document.removeEventListener('selectionchange', onSelectionChange);
+      selectionPins.forEach((release) => release());
+      selectionPins.clear();
       observer.current?.disconnect();
       resize.current?.disconnect();
       if (frame.current != null) cancelAnimationFrame(frame.current);
