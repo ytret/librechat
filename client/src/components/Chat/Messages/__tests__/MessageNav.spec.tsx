@@ -111,6 +111,7 @@ if (typeof (global as { PointerEvent?: unknown }).PointerEvent === 'undefined') 
 }
 
 import MessageNav from '../MessageNav';
+import { MessageWindowingContext } from '../Windowing/MessageWindowingContext';
 
 function buildMessage(overrides: Partial<TestMessage> = {}): TestMessage {
   return {
@@ -1039,6 +1040,84 @@ describe('MessageNav', () => {
       expect(io.disconnect).not.toHaveBeenCalled();
       unmount();
       expect(io.disconnect).toHaveBeenCalled();
+    });
+  });
+
+  describe('async navigation staleness', () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    it('a stale async navigation cannot override focus, scroll, or cancel a newer target', async () => {
+      const messages = [
+        buildMessage({ messageId: 'a', text: 'alpha', isCreatedByUser: true }),
+        buildMessage({ messageId: 'b', text: 'bravo' }),
+        buildMessage({ messageId: 'c', text: 'charlie', isCreatedByUser: true }),
+      ];
+      mockUseGetMessagesByConvoId.mockReturnValue({ data: messages });
+      const { scrollable } = buildDom(messages);
+
+      const deferredA = deferred<HTMLElement | null>();
+      const deferredB = deferred<HTMLElement | null>();
+      const ensureMessageMounted = jest.fn((id: string) =>
+        id === 'a' ? deferredA.promise : deferredB.promise,
+      );
+
+      const scrollWrites: number[] = [];
+      let scrollTop = 0;
+      Object.defineProperty(scrollable, 'scrollTop', {
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+          scrollWrites.push(value);
+        },
+        configurable: true,
+      });
+
+      const { container } = render(
+        <MessageWindowingContext.Provider value={{ ensureMessageMounted } as never}>
+          <MessageNav scrollableRef={{ current: scrollable } as RefObject<HTMLDivElement>} />
+        </MessageWindowingContext.Provider>,
+      );
+      act(() => {
+        jest.advanceTimersByTime(250);
+      });
+
+      const indicators = container.querySelectorAll('[data-msg-id]');
+      act(() => {
+        fireEvent.click(indicators[0] as HTMLElement);
+      });
+      act(() => {
+        fireEvent.click(indicators[1] as HTMLElement);
+      });
+
+      // Resolve the newer target (B) first, then the older target (A) last.
+      await act(async () => {
+        deferredB.resolve(document.getElementById('b'));
+        await Promise.resolve();
+      });
+      await act(async () => {
+        deferredA.resolve(document.getElementById('a'));
+        await Promise.resolve();
+      });
+
+      // A's stale continuation must not focus its target.
+      expect(document.activeElement).toBe(document.getElementById('b'));
+      // Neither continuation may write scroll synchronously; B's animation is pending.
+      expect(scrollWrites).toHaveLength(0);
+      expect(ensureMessageMounted).toHaveBeenCalledWith('a');
+      expect(ensureMessageMounted).toHaveBeenCalledWith('b');
+
+      // Advancing the animation frame proves B was not cancelled by A: exactly
+      // B's smooth scroll writes the container.
+      act(() => {
+        jest.advanceTimersByTime(16);
+      });
+      expect(scrollWrites.length).toBeGreaterThan(0);
     });
   });
 

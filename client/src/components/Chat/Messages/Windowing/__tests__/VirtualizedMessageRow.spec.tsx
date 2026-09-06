@@ -31,10 +31,13 @@ class MockIntersectionObserver {
   constructor(public callback: IntersectionObserverCallback) {}
 }
 class MockResizeObserver {
+  static instances: MockResizeObserver[] = [];
   observe = jest.fn();
   unobserve = jest.fn();
   disconnect = jest.fn();
-  constructor(public callback: ResizeObserverCallback) {}
+  constructor(public callback: ResizeObserverCallback) {
+    MockResizeObserver.instances.push(this);
+  }
 }
 
 const originalIO = global.IntersectionObserver;
@@ -57,12 +60,13 @@ function renderRow(forceMounted = true, id = 'message-1') {
 
 describe('VirtualizedMessageRow', () => {
   beforeEach(() => {
+    MockResizeObserver.instances = [];
     global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
     global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
     global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
-      return 1;
-    }) as typeof requestAnimationFrame;
+      return undefined;
+    }) as unknown as typeof requestAnimationFrame;
   });
   afterEach(() => {
     global.IntersectionObserver = originalIO;
@@ -151,5 +155,55 @@ describe('VirtualizedMessageRow', () => {
     // valid shell even when the provider has no geometry requiring unmounting.
     expect(shell).toHaveClass('message-render');
     jest.useRealTimers();
+  });
+
+  it('creates only one shared ResizeObserver regardless of row count', () => {
+    const scrollableRef = React.createRef<HTMLDivElement>();
+    render(
+      <MessageWindowingProvider scrollableRef={scrollableRef} conversationId="conversation">
+        <div ref={scrollableRef} className="scrollbar-gutter-stable">
+          {['a', 'b', 'c'].map((id) => (
+            <VirtualizedMessageRow key={id} messageId={id} message={message(id)} forceMounted>
+              <div data-testid={`content-${id}`}>expensive body</div>
+            </VirtualizedMessageRow>
+          ))}
+        </div>
+      </MessageWindowingProvider>,
+    );
+    expect(MockResizeObserver.instances).toHaveLength(1);
+  });
+
+  it('uses the latest measured height when a row becomes a placeholder', () => {
+    const scrollableRef = React.createRef<HTMLDivElement>();
+    let rowRect = { top: 100, bottom: 200, height: 100, left: 0, right: 100, width: 100 } as DOMRect;
+    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('scrollbar-gutter-stable')) {
+        return { top: 0, bottom: 500, height: 500, left: 0, right: 100, width: 100 } as DOMRect;
+      }
+      return rowRect;
+    });
+    render(
+      <MessageWindowingProvider scrollableRef={scrollableRef} conversationId="conversation">
+        <div ref={scrollableRef} className="scrollbar-gutter-stable">
+          <VirtualizedMessageRow messageId="m1" message={message('m1')} forceMounted={false}>
+            <div data-testid="expensive-content">expensive message body</div>
+          </VirtualizedMessageRow>
+        </div>
+      </MessageWindowingProvider>,
+    );
+    const shell = document.getElementById('m1')!;
+    expect(shell).toHaveAttribute('data-message-mounted', 'true');
+    const resize = MockResizeObserver.instances[0];
+    act(() =>
+      resize.callback(
+        [{ target: shell, contentRect: { height: 600 }, borderBoxSize: [{ blockSize: 600 }] } as unknown as ResizeObserverEntry],
+        resize as unknown as ResizeObserver,
+      ),
+    );
+    rowRect = { top: 5000, bottom: 5100, height: 100, left: 0, right: 100, width: 100 } as DOMRect;
+    act(() => fireEvent.scroll(scrollableRef.current as HTMLElement));
+    expect(shell).toHaveAttribute('data-message-mounted', 'false');
+    expect(shell.style.height).toBe('600px');
+    rectSpy.mockRestore();
   });
 });
