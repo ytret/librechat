@@ -78,7 +78,9 @@ describe('ScreenshotContext', () => {
       drawImage: jest.fn(),
     }));
     jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(getContext as never);
-    jest.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,abc');
+    jest
+      .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,abc');
 
     const { promise, resolve } = deferred();
     renderHarness(materializer, resolve);
@@ -116,6 +118,27 @@ describe('ScreenshotContext', () => {
     expect(order).toEqual(['materialize', 'cleanup']);
   });
 
+  it('does not call toCanvas and propagates when the materializer itself rejects', async () => {
+    const materializer = jest.fn(async () => {
+      throw new Error('materialization failed');
+    });
+    mockToCanvas.mockResolvedValue({ width: 10, height: 10 });
+
+    let result: unknown;
+    renderHarness(materializer, (value) => {
+      result = value;
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'capture' }));
+      await Promise.resolve();
+    });
+
+    expect(materializer).toHaveBeenCalledTimes(1);
+    expect(mockToCanvas).not.toHaveBeenCalled();
+    expect((result as Error).message).toBe('materialization failed');
+  });
+
   it('invokes only the current provider materializer across nested providers', async () => {
     const outerOrder: string[] = [];
     const innerOrder: string[] = [];
@@ -134,10 +157,14 @@ describe('ScreenshotContext', () => {
 
     const canvas = { width: 10, height: 10 };
     mockToCanvas.mockResolvedValue(canvas);
-    jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
-      () => ({ fillStyle: '', fillRect: jest.fn(), drawImage: jest.fn() }) as never,
-    );
-    jest.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,inner');
+    jest
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(
+        () => ({ fillStyle: '', fillRect: jest.fn(), drawImage: jest.fn() }) as never,
+      );
+    jest
+      .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,inner');
 
     function Inner() {
       const { screenshotTargetRef, captureScreenshot } = useScreenshot();
@@ -196,9 +223,11 @@ describe('ScreenshotContext', () => {
     });
     const canvas = { width: 10, height: 10 };
     mockToCanvas.mockResolvedValue(canvas);
-    jest.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(
-      () => ({ fillStyle: '', fillRect: jest.fn(), drawImage: jest.fn() }) as never,
-    );
+    jest
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(
+        () => ({ fillStyle: '', fillRect: jest.fn(), drawImage: jest.fn() }) as never,
+      );
     jest.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,x');
 
     const { promise, resolve } = deferred();

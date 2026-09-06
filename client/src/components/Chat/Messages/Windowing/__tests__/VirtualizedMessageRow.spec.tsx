@@ -17,12 +17,13 @@ jest.mock('~/Providers', () => ({
   useMessagesSubmission: () => ({ isSubmitting: mockIsSubmitting }),
 }));
 
-const message = (id: string, text = id) => ({
-  messageId: id,
-  conversationId: 'conversation',
-  text,
-  isCreatedByUser: false,
-}) as TMessage;
+const message = (id: string, text = id) =>
+  ({
+    messageId: id,
+    conversationId: 'conversation',
+    text,
+    isCreatedByUser: false,
+  }) as TMessage;
 
 class MockIntersectionObserver {
   observe = jest.fn();
@@ -61,7 +62,8 @@ function renderRow(forceMounted = true, id = 'message-1') {
 describe('VirtualizedMessageRow', () => {
   beforeEach(() => {
     MockResizeObserver.instances = [];
-    global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
+    global.IntersectionObserver =
+      MockIntersectionObserver as unknown as typeof IntersectionObserver;
     global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
     global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
@@ -88,11 +90,13 @@ describe('VirtualizedMessageRow', () => {
   });
 
   it('renders a height-preserving shell without expensive descendants when unmounted', () => {
-    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      return this.id === 'message-1'
-        ? ({ top: 5000, bottom: 5100, left: 0, right: 100, width: 100, height: 100 } as DOMRect)
-        : ({ top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect);
-    });
+    const rectSpy = jest
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.id === 'message-1'
+          ? ({ top: 5000, bottom: 5100, left: 0, right: 100, width: 100, height: 100 } as DOMRect)
+          : ({ top: 0, bottom: 100, left: 0, right: 100, width: 100, height: 100 } as DOMRect);
+      });
     renderRow(false);
     const shell = document.getElementById('message-1');
     expect(shell).toHaveClass('message-render');
@@ -130,11 +134,13 @@ describe('VirtualizedMessageRow', () => {
   });
 
   it('keeps the latest submitting row mounted while it is far away', () => {
-    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains('scrollbar-gutter-stable')
-        ? ({ top: 0, bottom: 500, height: 500 } as DOMRect)
-        : ({ top: 5000, bottom: 5100, height: 100 } as DOMRect);
-    });
+    const rectSpy = jest
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('scrollbar-gutter-stable')
+          ? ({ top: 0, bottom: 500, height: 500 } as DOMRect)
+          : ({ top: 5000, bottom: 5100, height: 100 } as DOMRect);
+      });
     mockLatestMessageId = 'message-1';
     mockIsSubmitting = true;
     renderRow(false);
@@ -175,13 +181,22 @@ describe('VirtualizedMessageRow', () => {
 
   it('uses the latest measured height when a row becomes a placeholder', () => {
     const scrollableRef = React.createRef<HTMLDivElement>();
-    let rowRect = { top: 100, bottom: 200, height: 100, left: 0, right: 100, width: 100 } as DOMRect;
-    const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains('scrollbar-gutter-stable')) {
-        return { top: 0, bottom: 500, height: 500, left: 0, right: 100, width: 100 } as DOMRect;
-      }
-      return rowRect;
-    });
+    let rowRect = {
+      top: 100,
+      bottom: 200,
+      height: 100,
+      left: 0,
+      right: 100,
+      width: 100,
+    } as DOMRect;
+    const rectSpy = jest
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('scrollbar-gutter-stable')) {
+          return { top: 0, bottom: 500, height: 500, left: 0, right: 100, width: 100 } as DOMRect;
+        }
+        return rowRect;
+      });
     render(
       <MessageWindowingProvider scrollableRef={scrollableRef} conversationId="conversation">
         <div ref={scrollableRef} className="scrollbar-gutter-stable">
@@ -196,7 +211,13 @@ describe('VirtualizedMessageRow', () => {
     const resize = MockResizeObserver.instances[0];
     act(() =>
       resize.callback(
-        [{ target: shell, contentRect: { height: 600 }, borderBoxSize: [{ blockSize: 600 }] } as unknown as ResizeObserverEntry],
+        [
+          {
+            target: shell,
+            contentRect: { height: 600 },
+            borderBoxSize: [{ blockSize: 600 }],
+          } as unknown as ResizeObserverEntry,
+        ],
         resize as unknown as ResizeObserver,
       ),
     );

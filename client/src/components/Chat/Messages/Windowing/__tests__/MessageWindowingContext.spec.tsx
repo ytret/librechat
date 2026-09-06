@@ -4,7 +4,8 @@ import { MessageWindowingProvider, useMessageWindowing } from '../MessageWindowi
 import { estimateMessageHeight } from '../messageHeightEstimate';
 import type { TMessage } from 'librechat-data-provider';
 
-const message = (id: string) => ({ messageId: id, conversationId: 'conversation', text: id }) as TMessage;
+const message = (id: string) =>
+  ({ messageId: id, conversationId: 'conversation', text: id }) as TMessage;
 
 class MockIntersectionObserver {
   static instances: MockIntersectionObserver[] = [];
@@ -48,7 +49,12 @@ function RegisteredRow({ id, forceMounted = false }: { id: string; forceMounted?
     [forceMounted, id, windowing],
   );
   return (
-    <div ref={element} data-testid={id} data-message-virtual-row="true" data-mounted={mounted ? 'true' : 'false'}>
+    <div
+      ref={element}
+      data-testid={id}
+      data-message-virtual-row="true"
+      data-mounted={mounted ? 'true' : 'false'}
+    >
       {mounted ? <span data-testid={`${id}-content`}>expensive content</span> : null}
     </div>
   );
@@ -58,12 +64,20 @@ function Harness({ children }: { children: React.ReactNode }) {
   const scrollableRef = useRef<HTMLDivElement>(null);
   return (
     <MessageWindowingProvider scrollableRef={scrollableRef} conversationId="conversation">
-      <div ref={scrollableRef} className="scroll-root">{children}</div>
+      <div ref={scrollableRef} className="scroll-root">
+        {children}
+      </div>
     </MessageWindowingProvider>
   );
 }
 
-function MeasuredRow({ id = 'measured', forceMounted = true }: { id?: string; forceMounted?: boolean }) {
+function MeasuredRow({
+  id = 'measured',
+  forceMounted = true,
+}: {
+  id?: string;
+  forceMounted?: boolean;
+}) {
   const windowing = useMessageWindowing();
   const token = useRef(Symbol(id));
   const element = useRef<HTMLDivElement>(null);
@@ -100,10 +114,17 @@ function MeasuredRow({ id = 'measured', forceMounted = true }: { id?: string; fo
   );
 }
 
+function MountButton({ id }: { id: string }) {
+  const { ensureMessageMounted } = useMessageWindowing();
+  return <button onClick={() => void ensureMessageMounted(id)}>mount {id}</button>;
+}
+
 const ROOT_RECT = { top: 0, bottom: 500, height: 500, left: 0, right: 500, width: 500 } as DOMRect;
 
 function mockRects(rowRects: Record<string, DOMRect>, rootRect: DOMRect = ROOT_RECT) {
-  return jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+  return jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: HTMLElement,
+  ) {
     if (this.classList.contains('scroll-root')) return rootRect;
     const testid = this.getAttribute('data-testid');
     if (testid && rowRects[testid]) return rowRects[testid];
@@ -111,10 +132,23 @@ function mockRects(rowRects: Record<string, DOMRect>, rootRect: DOMRect = ROOT_R
   });
 }
 
-function defineScroll(root: HTMLElement, opts: { scrollTop?: number; scrollHeight?: number; clientHeight?: number }) {
-  Object.defineProperty(root, 'scrollHeight', { value: opts.scrollHeight ?? 2000, configurable: true });
-  Object.defineProperty(root, 'clientHeight', { value: opts.clientHeight ?? 500, configurable: true });
-  Object.defineProperty(root, 'scrollTop', { value: opts.scrollTop ?? 0, writable: true, configurable: true });
+function defineScroll(
+  root: HTMLElement,
+  opts: { scrollTop?: number; scrollHeight?: number; clientHeight?: number },
+) {
+  Object.defineProperty(root, 'scrollHeight', {
+    value: opts.scrollHeight ?? 2000,
+    configurable: true,
+  });
+  Object.defineProperty(root, 'clientHeight', {
+    value: opts.clientHeight ?? 500,
+    configurable: true,
+  });
+  Object.defineProperty(root, 'scrollTop', {
+    value: opts.scrollTop ?? 0,
+    writable: true,
+    configurable: true,
+  });
 }
 
 function resizeEntry(target: Element, height: number) {
@@ -129,7 +163,8 @@ describe('MessageWindowingProvider', () => {
   beforeEach(() => {
     MockIntersectionObserver.instances = [];
     MockResizeObserver.instances = [];
-    global.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver;
+    global.IntersectionObserver =
+      MockIntersectionObserver as unknown as typeof IntersectionObserver;
     global.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
     global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
       callback(0);
@@ -175,16 +210,35 @@ describe('MessageWindowingProvider', () => {
       const token = useRef(Symbol('id-change'));
       const element = useRef<HTMLDivElement>(null);
       const [mounted, setMounted] = useState(false);
-      useEffect(() => windowing.registerRow({ token: token.current, id: 'message-1', message: message('message-1'), element: element.current, forceMounted: false, setMounted }), [windowing]);
+      useEffect(
+        () =>
+          windowing.registerRow({
+            token: token.current,
+            id: 'message-1',
+            message: message('message-1'),
+            element: element.current,
+            forceMounted: false,
+            setMounted,
+          }),
+        [windowing],
+      );
       return (
         <>
           <div ref={element} data-testid="renamed" data-mounted={mounted ? 'true' : 'false'} />
-          <button onClick={() => windowing.updateRowId(token.current, 'message-1', 'server-1')}>rename</button>
-          <button onClick={() => void windowing.ensureMessageMounted('server-1')}>find renamed</button>
+          <button onClick={() => windowing.updateRowId(token.current, 'message-1', 'server-1')}>
+            rename
+          </button>
+          <button onClick={() => void windowing.ensureMessageMounted('server-1')}>
+            find renamed
+          </button>
         </>
       );
     }
-    render(<Harness><RenamedRow /></Harness>);
+    render(
+      <Harness>
+        <RenamedRow />
+      </Harness>,
+    );
     await act(async () => screen.getByRole('button', { name: 'rename' }).click());
     await act(async () => screen.getByRole('button', { name: 'find renamed' }).click());
     expect(screen.getByTestId('renamed')).toHaveAttribute('data-mounted', 'true');
@@ -225,6 +279,55 @@ describe('MessageWindowingProvider', () => {
     expect(screen.getByTestId('message-2-content')).toBeInTheDocument();
   });
 
+  it('resolves navigation once a real measurement arrives, not only after animation frames', async () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      rafQueue.push(callback);
+      return rafQueue.length;
+    }) as typeof requestAnimationFrame;
+    try {
+      let resolved = false;
+      function Requester() {
+        const { ensureMessageMounted } = useMessageWindowing();
+        return (
+          <button
+            onClick={() => {
+              void ensureMessageMounted('message-1').then(() => {
+                resolved = true;
+              });
+            }}
+          >
+            jump
+          </button>
+        );
+      }
+      render(
+        <Harness>
+          <RegisteredRow id="message-1" />
+          <Requester />
+        </Harness>,
+      );
+      act(() => screen.getByRole('button', { name: 'jump' }).click());
+      // Animation frames are queued but not flushed, so the bounded fallback has
+      // not resolved yet.
+      expect(resolved).toBe(false);
+      // A real ResizeObserver measurement resolves the navigation immediately.
+      const resize = MockResizeObserver.instances[0];
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('message-1'), 600)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(resolved).toBe(true);
+    } finally {
+      global.requestAnimationFrame = originalRAF;
+    }
+  });
+
   it('materializes every registered row and restores optimization', async () => {
     function Materializer() {
       const { materializeAll } = useMessageWindowing();
@@ -249,7 +352,15 @@ describe('MessageWindowingProvider', () => {
     let cleanup: (() => void) | undefined;
     function Materializer() {
       const { materializeAll } = useMessageWindowing();
-      return <button onClick={async () => { cleanup = await materializeAll('debug'); }}>materialize</button>;
+      return (
+        <button
+          onClick={async () => {
+            cleanup = await materializeAll('debug');
+          }}
+        >
+          materialize
+        </button>
+      );
     }
     render(
       <Harness>
@@ -265,6 +376,66 @@ describe('MessageWindowingProvider', () => {
     rectSpy.mockRestore();
   });
 
+  it('restores windowing, scroll, and propagates when materialization settling rejects', async () => {
+    const rectSpy = mockRects({ message1: { top: 5000, bottom: 5100, height: 100 } as DOMRect });
+    let rejectFonts!: (reason?: unknown) => void;
+    const fontsReady = new Promise<never>((_, reject) => {
+      rejectFonts = reject;
+    });
+    const fontDescriptor = Object.getOwnPropertyDescriptor(document, 'fonts');
+    Object.defineProperty(document, 'fonts', { value: { ready: fontsReady }, configurable: true });
+
+    let caught: unknown;
+    function Materializer() {
+      const { materializeAll } = useMessageWindowing();
+      return (
+        <button
+          onClick={() => {
+            void materializeAll('screenshot').catch((err) => {
+              caught = err;
+            });
+          }}
+        >
+          materialize
+        </button>
+      );
+    }
+    try {
+      render(
+        <Harness>
+          <RegisteredRow id="message1" />
+          <Materializer />
+        </Harness>,
+      );
+      const root = document.querySelector('.scroll-root') as HTMLElement;
+      defineScroll(root, { scrollTop: 123 });
+
+      await act(async () => {
+        screen.getByRole('button', { name: 'materialize' }).click();
+        await Promise.resolve();
+      });
+      // Rows are mounted while settling waits on document.fonts.ready.
+      expect(screen.getByTestId('message1-content')).toBeInTheDocument();
+
+      await act(async () => {
+        rejectFonts(new Error('fonts never settled'));
+        await Promise.resolve();
+      });
+
+      // The original error propagates and windowing/scroll are restored.
+      expect((caught as Error).message).toBe('fonts never settled');
+      expect(screen.getByTestId('message1')).toHaveAttribute('data-mounted', 'false');
+      expect(root.scrollTop).toBe(123);
+    } finally {
+      rectSpy.mockRestore();
+      if (fontDescriptor) {
+        Object.defineProperty(document, 'fonts', fontDescriptor);
+      } else {
+        delete (document as unknown as { fonts?: unknown }).fonts;
+      }
+    }
+  });
+
   it('invalidates a row estimate on a message content layout event', () => {
     render(
       <Harness>
@@ -272,7 +443,11 @@ describe('MessageWindowingProvider', () => {
       </Harness>,
     );
     const row = screen.getByTestId('message-1');
-    act(() => row.dispatchEvent(new CustomEvent('librechat:message-content-layout-change', { bubbles: true })));
+    act(() =>
+      row.dispatchEvent(
+        new CustomEvent('librechat:message-content-layout-change', { bubbles: true }),
+      ),
+    );
     expect(row).toBeInTheDocument();
   });
 
@@ -302,80 +477,183 @@ describe('MessageWindowingProvider', () => {
     const ABOVE = { top: -400, bottom: -300, height: 100 } as DOMRect;
     const INSIDE = { top: 100, bottom: 200, height: 100 } as DOMRect;
     const BELOW = { top: 600, bottom: 700, height: 100 } as DOMRect;
+    const FAR_ABOVE = { top: -2000, bottom: -1900, height: 100 } as DOMRect;
 
-    it('applies a positive first-measurement delta above the viewport', () => {
+    // Renders an unmounted (placeholder) row far above the viewport and mounts it
+    // on demand, exercising the placeholder→mounted transition in isolation.
+    function renderPlaceholderScenario() {
+      let rowRect: DOMRect = FAR_ABOVE;
+      const rectSpy = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains('scroll-root')) return ROOT_RECT;
+          if (this.getAttribute('data-testid') === 'measured') return rowRect;
+          return ROOT_RECT;
+        });
+      render(
+        <Harness>
+          <MeasuredRow id="measured" forceMounted={false} />
+          <MountButton id="measured" />
+        </Harness>,
+      );
+      const root = document.querySelector('.scroll-root') as HTMLElement;
+      const resize = MockResizeObserver.instances[0];
+      const shell = screen.getByTestId('measured');
+      return {
+        rectSpy,
+        root,
+        resize,
+        shell,
+        setRowRect: (r: DOMRect) => {
+          rowRect = r;
+        },
+      };
+    }
+
+    it('establishes a baseline without correcting an initially mounted row above the viewport', () => {
       const rectSpy = mockRects({ measured: ABOVE });
       render(
         <Harness>
-          <MeasuredRow id="measured" />
+          <MeasuredRow id="measured" forceMounted />
         </Harness>,
       );
       const root = document.querySelector('.scroll-root') as HTMLElement;
       defineScroll(root, { scrollTop: 100 });
       const resize = MockResizeObserver.instances[0];
-      act(() => resize.callback([resizeEntry(screen.getByTestId('measured'), 600)], resize as unknown as ResizeObserver));
-      // estimate 420 -> measured 600 = +180
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('measured'), 600)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
+      // The real height was already participating in layout from the first render;
+      // the first measurement only records it and must not create a jump.
+      expect(root.scrollTop).toBe(100);
+      rectSpy.mockRestore();
+    });
+
+    it('corrects a real resize of an already-measured mounted row above the viewport', () => {
+      const rectSpy = mockRects({ measured: ABOVE });
+      render(
+        <Harness>
+          <MeasuredRow id="measured" forceMounted />
+        </Harness>,
+      );
+      const root = document.querySelector('.scroll-root') as HTMLElement;
+      defineScroll(root, { scrollTop: 100 });
+      const resize = MockResizeObserver.instances[0];
+      // First measurement establishes the baseline without correction.
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('measured'), 600)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
+      expect(root.scrollTop).toBe(100);
+      // A later real resize must be corrected (600 -> 780 = +180).
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('measured'), 780)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
       expect(root.scrollTop).toBe(280);
       rectSpy.mockRestore();
     });
 
-    it('applies a negative first-measurement delta above the viewport', () => {
+    it('corrects a negative real resize of an already-measured mounted row above the viewport', () => {
       const rectSpy = mockRects({ measured: ABOVE });
       render(
         <Harness>
-          <MeasuredRow id="measured" />
+          <MeasuredRow id="measured" forceMounted />
         </Harness>,
       );
       const root = document.querySelector('.scroll-root') as HTMLElement;
       defineScroll(root, { scrollTop: 500 });
       const resize = MockResizeObserver.instances[0];
-      act(() => resize.callback([resizeEntry(screen.getByTestId('measured'), 300)], resize as unknown as ResizeObserver));
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('measured'), 600)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
+      expect(root.scrollTop).toBe(500);
+      // 600 -> 480 = -120
+      act(() =>
+        resize.callback(
+          [resizeEntry(screen.getByTestId('measured'), 480)],
+          resize as unknown as ResizeObserver,
+        ),
+      );
+      expect(root.scrollTop).toBe(380);
+      rectSpy.mockRestore();
+    });
+
+    it('corrects the estimate→measured delta when a placeholder above the viewport mounts', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
+      expect(shell).toHaveAttribute('data-mounted', 'false');
+      defineScroll(root, { scrollTop: 100 });
+      setRowRect(ABOVE);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      expect(shell).toHaveAttribute('data-mounted', 'true');
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
+      // estimate 420 -> measured 600 = +180
+      expect(root.scrollTop).toBe(280);
+      rectSpy.mockRestore();
+    });
+
+    it('corrects a negative estimate→measured delta when a placeholder above the viewport mounts', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
+      defineScroll(root, { scrollTop: 500 });
+      setRowRect(ABOVE);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      act(() => resize.callback([resizeEntry(shell, 300)], resize as unknown as ResizeObserver));
       // estimate 420 -> measured 300 = -120
       expect(root.scrollTop).toBe(380);
       rectSpy.mockRestore();
     });
 
-    it('does not apply a whole-row correction inside the viewport', () => {
-      const rectSpy = mockRects({ measured: INSIDE });
-      render(
-        <Harness>
-          <MeasuredRow id="measured" />
-        </Harness>,
-      );
-      const root = document.querySelector('.scroll-root') as HTMLElement;
+    it('does not correct a placeholder→mounted row inside the viewport', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
       defineScroll(root, { scrollTop: 100 });
-      const resize = MockResizeObserver.instances[0];
-      act(() => resize.callback([resizeEntry(screen.getByTestId('measured'), 600)], resize as unknown as ResizeObserver));
+      setRowRect(INSIDE);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
       expect(root.scrollTop).toBe(100);
       rectSpy.mockRestore();
     });
 
-    it('does not apply a whole-row correction below the viewport', () => {
-      const rectSpy = mockRects({ measured: BELOW });
-      render(
-        <Harness>
-          <MeasuredRow id="measured" />
-        </Harness>,
-      );
-      const root = document.querySelector('.scroll-root') as HTMLElement;
+    it('does not correct a placeholder→mounted row below the viewport', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
       defineScroll(root, { scrollTop: 100 });
-      const resize = MockResizeObserver.instances[0];
-      act(() => resize.callback([resizeEntry(screen.getByTestId('measured'), 600)], resize as unknown as ResizeObserver));
+      setRowRect(BELOW);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
       expect(root.scrollTop).toBe(100);
       rectSpy.mockRestore();
     });
 
-    it('does not correct when the user is bottom-pinned', () => {
-      const rectSpy = mockRects({ measured: ABOVE });
-      render(
-        <Harness>
-          <MeasuredRow id="measured" />
-        </Harness>,
-      );
-      const root = document.querySelector('.scroll-root') as HTMLElement;
+    it('does not correct when the user is bottom-pinned', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
       defineScroll(root, { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 });
-      const resize = MockResizeObserver.instances[0];
-      act(() => resize.callback([resizeEntry(screen.getByTestId('measured'), 600)], resize as unknown as ResizeObserver));
+      setRowRect(ABOVE);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
       expect(root.scrollTop).toBe(1500);
       rectSpy.mockRestore();
     });
@@ -390,8 +668,8 @@ describe('MessageWindowingProvider', () => {
         const rectSpy = mockRects({ row1: ABOVE, row2: ABOVE });
         render(
           <Harness>
-            <MeasuredRow id="row1" />
-            <MeasuredRow id="row2" />
+            <MeasuredRow id="row1" forceMounted />
+            <MeasuredRow id="row2" forceMounted />
           </Harness>,
         );
         const root = document.querySelector('.scroll-root') as HTMLElement;
@@ -408,6 +686,23 @@ describe('MessageWindowingProvider', () => {
           configurable: true,
         });
         const resize = MockResizeObserver.instances[0];
+        // Establish both baselines first (no correction).
+        act(() => {
+          resize.callback(
+            [
+              resizeEntry(screen.getByTestId('row1'), 420),
+              resizeEntry(screen.getByTestId('row2'), 420),
+            ],
+            resize as unknown as ResizeObserver,
+          );
+        });
+        act(() => {
+          while (rafQueue.length) {
+            const cb = rafQueue.shift()!;
+            cb(0);
+          }
+        });
+        // Real resizes in one frame: row1 +80 and row2 +280 combine into one write.
         act(() => {
           resize.callback(
             [
@@ -417,8 +712,6 @@ describe('MessageWindowingProvider', () => {
             resize as unknown as ResizeObserver,
           );
         });
-        // Flush every queued animation frame explicitly. The two deltas
-        // (+80 and +280) must be combined into a single scrollTop write.
         act(() => {
           while (rafQueue.length) {
             const cb = rafQueue.shift()!;
@@ -435,10 +728,12 @@ describe('MessageWindowingProvider', () => {
 
     it('uses the latest measured height when a row becomes a placeholder', () => {
       let rowRect: DOMRect = INSIDE;
-      const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        if (this.classList.contains('scroll-root')) return ROOT_RECT;
-        return rowRect;
-      });
+      const rectSpy = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains('scroll-root')) return ROOT_RECT;
+          return rowRect;
+        });
       render(
         <Harness>
           <MeasuredRow id="measured" forceMounted={false} />
@@ -465,22 +760,43 @@ describe('MessageWindowingProvider', () => {
         const [mounted, setMountedState] = useState(false);
         const height = useRef(estimateMessageHeight(message('client-id')));
         const setMounted = useCallback((value: boolean, measuredHeight?: number) => {
-          if (!value && typeof measuredHeight === 'number' && measuredHeight > 0) height.current = measuredHeight;
+          if (!value && typeof measuredHeight === 'number' && measuredHeight > 0)
+            height.current = measuredHeight;
           setMountedState(value);
         }, []);
-        useEffect(() => windowing.registerRow({ token: token.current, id: 'client-id', message: message('client-id'), element: element.current, forceMounted: false, setMounted }), [windowing, setMounted]);
+        useEffect(
+          () =>
+            windowing.registerRow({
+              token: token.current,
+              id: 'client-id',
+              message: message('client-id'),
+              element: element.current,
+              forceMounted: false,
+              setMounted,
+            }),
+          [windowing, setMounted],
+        );
         return (
           <>
-            <div ref={element} data-testid="renameable" data-mounted={mounted ? 'true' : 'false'} style={mounted ? undefined : { height: `${height.current}px` }} />
-            <button onClick={() => windowing.updateRowId(token.current, 'client-id', 'server-id')}>rename</button>
+            <div
+              ref={element}
+              data-testid="renameable"
+              data-mounted={mounted ? 'true' : 'false'}
+              style={mounted ? undefined : { height: `${height.current}px` }}
+            />
+            <button onClick={() => windowing.updateRowId(token.current, 'client-id', 'server-id')}>
+              rename
+            </button>
           </>
         );
       }
       let rowRect: DOMRect = INSIDE;
-      const rectSpy = jest.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-        if (this.classList.contains('scroll-root')) return ROOT_RECT;
-        return rowRect;
-      });
+      const rectSpy = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains('scroll-root')) return ROOT_RECT;
+          return rowRect;
+        });
       render(
         <Harness>
           <RenameableRow />
