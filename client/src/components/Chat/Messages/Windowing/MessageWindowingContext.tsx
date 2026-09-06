@@ -8,6 +8,10 @@ export const OVERSCAN_PX = 1200;
 export const UNMOUNT_HYSTERESIS_PX = 2400;
 /** Upper bound for waiting on a post-mount measurement during a navigation jump. */
 export const NAVIGATION_MEASUREMENT_TIMEOUT_MS = 250;
+/** Upper bound for settling mounts before a screenshot/debug capture. A real
+ *  timeout (not just two RAFs) guarantees cleanup still runs when animation
+ *  frames are suspended (background tab, throttled webview, etc.). */
+export const MATERIALIZE_SETTLE_TIMEOUT_MS = 500;
 
 type Row = RowRegistration & {
   mounted: boolean;
@@ -310,9 +314,20 @@ export function MessageWindowingProvider({
         schedule();
       };
       try {
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
+        // Wait for React to commit the mounts and settle layout (two frames),
+        // bounded by a real timeout so the capture and its cleanup can never
+        // hang when RAF is suspended.
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const done = () => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          };
+          requestAnimationFrame(() => requestAnimationFrame(done));
+          setTimeout(done, MATERIALIZE_SETTLE_TIMEOUT_MS);
+        });
         if (typeof document.fonts?.ready?.then === 'function') await document.fonts.ready;
       } catch (err) {
         // If settling fails, still restore normal windowing rather than leaving every
