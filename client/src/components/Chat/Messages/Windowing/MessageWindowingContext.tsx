@@ -6,6 +6,8 @@ import { MESSAGE_CONTENT_LAYOUT_CHANGE_EVENT } from '~/hooks/Messages/messageLay
 
 export const OVERSCAN_PX = 1200;
 export const UNMOUNT_HYSTERESIS_PX = 2400;
+/** Upper bound for waiting on a post-mount measurement during a navigation jump. */
+export const NAVIGATION_MEASUREMENT_TIMEOUT_MS = 250;
 
 type Row = RowRegistration & {
   mounted: boolean;
@@ -16,6 +18,10 @@ type Row = RowRegistration & {
    *  correction. Initially/force-mounted rows never set this, so their first
    *  measurement establishes a baseline without correcting. */
   pendingAnchorCorrection: boolean;
+  /** Incremented on every accepted ResizeObserver measurement. Navigation uses
+   *  it to distinguish a stale placeholder measurement from the measurement of
+   *  the freshly mounted subtree. */
+  measureVersion: number;
   pins: Set<PinReason>;
   waiters: Array<(el: HTMLElement | null) => void>;
   measureWaiters: Array<() => void>;
@@ -109,7 +115,11 @@ export function MessageWindowingProvider({
       const delta = height - oldHeight;
       row.measured = true;
       row.height = height;
+      row.measureVersion += 1;
       // Signal any pending navigation that a real measurement is now available.
+      // Each waiter self-checks that the version has advanced past its own
+      // snapshot, so a stale placeholder measurement cannot resolve a jump that
+      // requested a freshly mounted subtree.
       row.measureWaiters.splice(0).forEach((resolve) => resolve());
       if (firstMeasurement && !row.pendingAnchorCorrection) {
         // A row mounted from its very first render already had its real DOM
@@ -149,6 +159,7 @@ export function MessageWindowingProvider({
         height: estimateMessageHeight(registration.message),
         measured: false,
         pendingAnchorCorrection: false,
+        measureVersion: 0,
         pins: new Set(),
         waiters: [],
         measureWaiters: [],
@@ -237,6 +248,8 @@ export function MessageWindowingProvider({
       const row = byId.current.get(id);
       if (!row) return null;
       row.pins.add('navigation');
+      const wasMounted = row.mounted;
+      const versionBefore = row.measureVersion;
       setMounted(row, true);
       const previousTimer = navigationTimers.current.get(row.token);
       if (previousTimer) clearTimeout(previousTimer);
@@ -250,26 +263,35 @@ export function MessageWindowingProvider({
       );
       if (!row.element)
         return new Promise<HTMLElement | null>((resolve) => row.waiters.push(resolve));
-      // The shell is already present, but the expensive subtree is committed on the
-      // next React turn. Prefer waiting for a real ResizeObserver measurement so
-      // navigation reads exact geometry, bounded by a two-frame fallback in case
-      // measurement never arrives (e.g. a zero-size or fixed-height target).
-      await new Promise<void>((resolve) => {
+      // A row that was already mounted before this request exposes real, current
+      // geometry — there is nothing further to wait for.
+      if (wasMounted && row.measured) return row.element;
+      // Otherwise the shell was a placeholder (or a just-mounted, still-unmeasured
+      // row). Placeholders are also observed by ResizeObserver, so `measured` can
+      // be true from a stale placeholder measurement. Wait for a *new* measurement
+      // after mounting (a measureVersion advance), bounded by a real timeout so the
+      // jump can never hang when the mounted height happens to equal the placeholder.
+      return new Promise<HTMLElement | null>((resolve) => {
         let settled = false;
-        const done = () => {
-          if (!settled) {
-            settled = true;
-            resolve();
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          resolve(row.element);
+        };
+        const onMeasurement = () => {
+          if (row.measureVersion > versionBefore) {
+            clearTimeout(timer);
+            settle();
           }
         };
-        if (row.measured) {
-          done();
-          return;
-        }
-        row.measureWaiters.push(done);
-        requestAnimationFrame(() => requestAnimationFrame(done));
+        const onTimeout = () => {
+          const index = row.measureWaiters.indexOf(onMeasurement);
+          if (index >= 0) row.measureWaiters.splice(index, 1);
+          settle();
+        };
+        row.measureWaiters.push(onMeasurement);
+        const timer = setTimeout(onTimeout, NAVIGATION_MEASUREMENT_TIMEOUT_MS);
       });
-      return row.element;
     },
     [schedule, setMounted],
   );
