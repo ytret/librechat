@@ -6,7 +6,7 @@ import type { TMessage } from 'librechat-data-provider';
 import { useScreenshot, useMessageScrolling, useLocalize } from '~/hooks';
 import ScrollToBottom from '~/components/Messages/ScrollToBottom';
 import { MessagesViewProvider } from '~/Providers';
-import { MessageWindowingProvider } from './Windowing';
+import { MessageWindowingProvider, useMessageWindowing } from './Windowing';
 import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
 import MessageNav from './MessageNav';
@@ -38,7 +38,34 @@ function MessagesViewContent({
   const { conversationId } = conversation ?? {};
 
   return (
-    <>
+    <MessageWindowingProvider scrollableRef={scrollableRef} conversationId={conversationId}>
+    <MessagesViewBody
+      messagesTree={_messagesTree}
+      localize={localize}
+      fontSize={fontSize}
+      screenshotTargetRef={screenshotTargetRef}
+      scrollButtonPreference={scrollButtonPreference}
+      currentEditId={currentEditId}
+      setCurrentEditId={setCurrentEditId}
+      scrollToBottomRef={scrollToBottomRef}
+      scrollableRef={scrollableRef}
+      contentRef={contentRef}
+      messagesEndRef={messagesEndRef}
+      showScrollButton={showScrollButton}
+      handleSmoothToRef={handleSmoothToRef}
+      debouncedHandleScroll={debouncedHandleScroll}
+      conversationId={conversationId}
+    />
+    </MessageWindowingProvider>
+  );
+}
+
+function MessagesViewBody({ messagesTree, localize, fontSize, screenshotTargetRef, scrollButtonPreference, currentEditId, setCurrentEditId, scrollToBottomRef, scrollableRef, contentRef, messagesEndRef, showScrollButton, handleSmoothToRef, debouncedHandleScroll, conversationId }: any) {
+  const { materializeAll } = useMessageWindowing();
+  const { registerMaterializer } = useScreenshot();
+  useEffect(() => registerMaterializer?.(() => materializeAll('screenshot')), [registerMaterializer, materializeAll]);
+  return (
+      <>
       <div className="relative flex-1 overflow-hidden overflow-y-auto">
         <div className="relative h-full">
           <div
@@ -52,7 +79,7 @@ function MessagesViewContent({
             }}
           >
             <div ref={contentRef} className="flex flex-col pb-9 pt-14 dark:bg-transparent">
-              {(_messagesTree && _messagesTree.length == 0) || _messagesTree === null ? (
+              {(messagesTree && messagesTree.length == 0) || messagesTree === null ? (
                 <div
                   className={cn(
                     'flex w-full items-center justify-center p-3 text-text-secondary',
@@ -65,7 +92,7 @@ function MessagesViewContent({
                 <>
                   <div ref={screenshotTargetRef}>
                     <MultiMessage
-                      messagesTree={_messagesTree}
+                      messagesTree={messagesTree}
                       messageId={conversationId ?? null}
                       setCurrentEditId={setCurrentEditId}
                       currentEditId={currentEditId ?? null}
@@ -105,12 +132,7 @@ function MessagesViewContent({
 export default function MessagesView({ messagesTree }: { messagesTree?: TMessage[] | null }) {
   return (
     <MessagesViewProvider>
-      <MessagesViewWindowedContent messagesTree={messagesTree} />
+      <MessagesViewContent messagesTree={messagesTree} />
     </MessagesViewProvider>
   );
-}
-
-function MessagesViewWindowedContent({ messagesTree }: { messagesTree?: TMessage[] | null }) {
-  const scrollableRef = useRef<HTMLElement>(null);
-  return <MessageWindowingProvider scrollableRef={scrollableRef}><MessagesViewContent messagesTree={messagesTree} /></MessageWindowingProvider>;
 }
