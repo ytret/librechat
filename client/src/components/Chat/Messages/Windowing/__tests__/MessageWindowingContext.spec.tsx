@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import {
+  MATERIALIZE_SETTLE_TIMEOUT_MS,
   MessageWindowingProvider,
   NAVIGATION_MEASUREMENT_TIMEOUT_MS,
   useMessageWindowing,
@@ -538,6 +539,64 @@ describe('MessageWindowingProvider', () => {
       } else {
         delete (document as unknown as { fonts?: unknown }).fonts;
       }
+    }
+  });
+
+  it('materializeAll settles on a bounded timeout when animation frames are suspended', async () => {
+    jest.useFakeTimers();
+    const rafQueue: FrameRequestCallback[] = [];
+    global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      rafQueue.push(callback);
+      return rafQueue.length;
+    }) as typeof requestAnimationFrame;
+    try {
+      const rectSpy = mockRects({
+        message1: { top: 5000, bottom: 5100, height: 100 } as DOMRect,
+      });
+      let cleanup: (() => void) | undefined;
+      function Materializer() {
+        const { materializeAll } = useMessageWindowing();
+        return (
+          <button
+            onClick={() => {
+              void materializeAll('screenshot').then((c) => {
+                cleanup = c;
+              });
+            }}
+          >
+            materialize
+          </button>
+        );
+      }
+      render(
+        <Harness>
+          <RegisteredRow id="message1" />
+          <Materializer />
+        </Harness>,
+      );
+      const root = document.querySelector('.scroll-root') as HTMLElement;
+      defineScroll(root, { scrollTop: 200 });
+
+      act(() => screen.getByRole('button', { name: 'materialize' }).click());
+      // Rows are mounted synchronously, but the settle wait is still pending
+      // because RAF never fires in this environment.
+      expect(screen.getByTestId('message1-content')).toBeInTheDocument();
+      expect(cleanup).toBeUndefined();
+
+      // The bounded timeout releases the settle wait even though RAF is frozen.
+      await act(async () => {
+        jest.advanceTimersByTime(MATERIALIZE_SETTLE_TIMEOUT_MS);
+        await Promise.resolve();
+      });
+      expect(cleanup).toBeDefined();
+
+      // Cleanup restores scroll and windowing policy.
+      act(() => cleanup?.());
+      expect(root.scrollTop).toBe(200);
+      rectSpy.mockRestore();
+    } finally {
+      global.requestAnimationFrame = originalRAF;
+      jest.useRealTimers();
     }
   });
 
