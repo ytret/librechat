@@ -4,6 +4,7 @@ import { ContentTypes } from 'librechat-data-provider';
 import { HoverCard, HoverCardTrigger, HoverCardPortal, HoverCardContent } from '@librechat/client';
 import type { TMessage, TMessageContentParts } from 'librechat-data-provider';
 import { useMessagesConversation, useMessagesSubmission } from '~/Providers';
+import { useOptionalMessageWindowing } from './Windowing';
 import { useGetMessagesByConvoId } from '~/data-provider';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
@@ -50,7 +51,7 @@ const USER_TURN_SELECTOR = '.user-turn';
 
 function buildFallbackEntry(node: HTMLElement, id: string): MessageEntry {
   const isUser = node.querySelector(USER_TURN_SELECTOR) != null;
-  const trimmed = (node.textContent ?? '').trim();
+  const trimmed = node.dataset.messageMounted === 'false' ? '' : (node.textContent ?? '').trim();
   return {
     id,
     isUser,
@@ -178,6 +179,7 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
   const localize = useLocalize();
   const { conversationId } = useMessagesConversation();
   const { isSubmitting } = useMessagesSubmission();
+  const windowing = useOptionalMessageWindowing();
   const { data: messages } = useGetMessagesByConvoId(
     conversationId ?? '',
     {
@@ -268,8 +270,12 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
   );
 
   const scrollToStart = useCallback(
-    (id: string) => {
-      const el = resolveEntryEl(id);
+    async (id: string) => {
+      const el = id === MESSAGES_END_ID
+        ? resolveEntryEl(id)
+        : windowing
+          ? await windowing.ensureMessageMounted(id)
+          : resolveEntryEl(id);
       if (!el) {
         return;
       }
@@ -301,12 +307,16 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
 
       requestAnimationFrame(step);
     },
-    [resolveEntryEl],
+    [resolveEntryEl, windowing],
   );
 
   const scrollToImmediate = useCallback(
-    (id: string) => {
-      const el = resolveEntryEl(id);
+    async (id: string) => {
+      const el = id === MESSAGES_END_ID
+        ? resolveEntryEl(id)
+        : windowing
+          ? await windowing.ensureMessageMounted(id)
+          : resolveEntryEl(id);
       if (!el) {
         return;
       }
@@ -318,7 +328,7 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
       const scrollMargin = scrollMarginRef.current || readScrollMargin(el);
       container.scrollTop = computeTargetScroll(container, el, scrollMargin);
     },
-    [resolveEntryEl],
+    [resolveEntryEl, windowing],
   );
 
   const focusMessage = useCallback((id: string) => {

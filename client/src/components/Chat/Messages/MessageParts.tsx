@@ -114,13 +114,10 @@ export default function Message(props: TMessageProps) {
         <div className="m-auto justify-center p-4 py-2 md:gap-6">
           <div
             ref={messageRef}
-            id={messageId ?? ''}
-            aria-label={getMessageAriaLabel(message, localize)}
             className={cn(
               baseClasses.common,
               baseClasses.chat,
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
-              'message-render',
             )}
           >
             {!hasParallelContent && (
