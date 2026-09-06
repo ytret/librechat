@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { estimateMessageHeight } from './messageHeightEstimate';
 import type { MessageWindowingContextValue, PinReason, RowRegistration, RowToken } from './types';
 import { MESSAGE_CONTENT_LAYOUT_CHANGE_EVENT } from '~/hooks/Messages/messageLayout';
@@ -14,7 +15,8 @@ type Row = RowRegistration & {
   waiters: Array<(el: HTMLElement | null) => void>;
 };
 
-const Context = createContext<MessageWindowingContextValue | null>(null);
+export const MessageWindowingContext = createContext<MessageWindowingContextValue | null>(null);
+const Context = MessageWindowingContext;
 
 function getScrollRoot(ref: React.RefObject<HTMLElement>): HTMLElement | null {
   return ref.current ?? [...document.querySelectorAll<HTMLElement>('.scrollbar-gutter-stable')].find((node) => node.querySelector('#messages-end')) ?? null;
@@ -31,6 +33,7 @@ export function MessageWindowingProvider({
 }) {
   const rows = useRef(new Map<RowToken, Row>());
   const byId = useRef(new Map<string, Row>());
+  const elementToRow = useRef(new WeakMap<Element, Row>());
   const frame = useRef<number>();
   const correctionFrame = useRef<number>();
   const pendingCorrection = useRef(0);
@@ -42,7 +45,10 @@ export function MessageWindowingProvider({
   const setMounted = useCallback((row: Row, value: boolean) => {
     if (row.mounted === value) return;
     row.mounted = value;
-    row.setMounted(value);
+    // Hand the row its latest measured height when it becomes a placeholder so
+    // the placeholder preserves real geometry rather than falling back to the
+    // estimate. Mounting uses automatic height and therefore passes nothing.
+    row.setMounted(value, value ? undefined : row.height);
     if (value) row.waiters.splice(0).forEach((resolve) => resolve(row.element));
   }, []);
 
@@ -53,17 +59,22 @@ export function MessageWindowingProvider({
       const root = getScrollRoot(scrollableRef);
       if (!root) return;
       const bounds = root.getBoundingClientRect();
+      // Batch all geometry reads before applying any mount/unmount writes. A
+      // write cannot invalidate the measurements of a later row in the same pass.
+      const decisions: Array<{ row: Row; mount: boolean }> = [];
       rows.current.forEach((row) => {
-        if (!row.element || materialized.current || row.forceMounted || row.pins.size) {
-          if (row.element && (materialized.current || row.forceMounted || row.pins.size)) setMounted(row, true);
+        if (!row.element) return;
+        if (materialized.current || row.forceMounted || row.pins.size) {
+          decisions.push({ row, mount: true });
           return;
         }
         const box = row.element.getBoundingClientRect();
         const near = box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
         const far = box.bottom < bounds.top - UNMOUNT_HYSTERESIS_PX || box.top > bounds.bottom + UNMOUNT_HYSTERESIS_PX;
-        if (near) setMounted(row, true);
-        else if (far) setMounted(row, false);
+        if (near) decisions.push({ row, mount: true });
+        else if (far) decisions.push({ row, mount: false });
       });
+      decisions.forEach(({ row, mount }) => setMounted(row, mount));
     });
   }, [scrollableRef, setMounted]);
 
@@ -71,18 +82,18 @@ export function MessageWindowingProvider({
     const row = rows.current.get(token);
     if (!row || rawHeight <= 0) return;
     const height = Math.round(rawHeight * 10) / 10;
-    const delta = height - row.height;
-    if (!row.measured) {
-      row.measured = true;
-      row.height = height;
-      return;
-    }
+    // The first real measurement replaces the placeholder/estimate. Apply the
+    // same explicit anchor correction as later changes so that a materialized
+    // row above the viewport cannot shift content under the user's eyes.
+    const oldHeight = row.height;
+    const delta = height - oldHeight;
+    row.measured = true;
+    row.height = height;
     if (Math.abs(delta) < 0.1) return;
     const root = getScrollRoot(scrollableRef);
     const box = row.element?.getBoundingClientRect();
     const rootBox = root?.getBoundingClientRect();
     const atBottom = root ? root.scrollHeight - root.scrollTop - root.clientHeight < 4 : false;
-    row.height = height;
     // A replacement above the viewport changes the scroll coordinate of everything below it.
     // Accumulate corrections so a stream or a batch of ResizeObserver entries writes once.
     if (root && box && rootBox && box.bottom <= rootBox.top && !atBottom) {
@@ -109,13 +120,13 @@ export function MessageWindowingProvider({
     };
     rows.current.set(registration.token, row);
     byId.current.set(registration.id, row);
+    if (registration.element) elementToRow.current.set(registration.element, row);
     const root = getScrollRoot(scrollableRef);
     if (!registration.forceMounted && registration.element && root) {
       const bounds = root.getBoundingClientRect();
       const box = registration.element.getBoundingClientRect();
       const initiallyNear = box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
-      row.mounted = initiallyNear;
-      registration.setMounted(initiallyNear);
+      if (initiallyNear) setMounted(row, true);
     }
     if (observer.current && registration.element) observer.current.observe(registration.element);
     if (resize.current && registration.element) resize.current.observe(registration.element);
@@ -124,6 +135,7 @@ export function MessageWindowingProvider({
       if (registration.element) {
         observer.current?.unobserve(registration.element);
         resize.current?.unobserve(registration.element);
+        elementToRow.current.delete(registration.element);
       }
       rows.current.delete(registration.token);
       const navigationTimer = navigationTimers.current.get(registration.token);
@@ -132,7 +144,7 @@ export function MessageWindowingProvider({
       if (byId.current.get(registration.id) === row) byId.current.delete(registration.id);
       row.waiters.splice(0).forEach((resolve) => resolve(null));
     };
-  }, [schedule, scrollableRef]);
+  }, [schedule, scrollableRef, setMounted]);
 
   const updateRowId = useCallback((token: RowToken, oldId: string, newId: string) => {
     const row = rows.current.get(token);
@@ -195,16 +207,34 @@ export function MessageWindowingProvider({
     const previousScrollTop = root?.scrollTop;
     materialized.current = true;
     rows.current.forEach((row) => setMounted(row, true));
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    if (typeof document.fonts?.ready?.then === 'function') await document.fonts.ready;
-    return () => {
+    const cleanup = () => {
       // Native find has no close event. Keep the complete DOM until the conversation changes.
       if (reason === 'find') return;
       materialized.current = false;
       if (root && previousScrollTop != null) root.scrollTop = previousScrollTop;
       schedule();
     };
+    try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (typeof document.fonts?.ready?.then === 'function') await document.fonts.ready;
+    } catch (err) {
+      // If settling fails, still restore normal windowing rather than leaving every
+      // row mounted, then propagate the error to the caller.
+      cleanup();
+      throw err;
+    }
+    return cleanup;
   }, [schedule, scrollableRef, setMounted]);
+
+  // Browser find must have text present in the DOM before the native default
+  // action runs, so materialization is committed synchronously at the event
+  // boundary. Fonts/layout settling is intentionally skipped here.
+  const materializeAllSync = useCallback(() => {
+    materialized.current = true;
+    flushSync(() => {
+      rows.current.forEach((row) => setMounted(row, true));
+    });
+  }, [setMounted]);
 
   const value = useMemo(() => ({
     registerRow,
@@ -227,7 +257,7 @@ export function MessageWindowingProvider({
       : undefined;
     resize.current = typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver((entries) => entries.forEach((entry) => {
-          const row = [...rows.current.values()].find((item) => item.element === entry.target);
+          const row = elementToRow.current.get(entry.target);
           if (row) reportHeight(row.token, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
         }))
       : undefined;
@@ -239,7 +269,7 @@ export function MessageWindowingProvider({
       resize.current?.observe(row.element);
     });
     const onFind = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') void materializeAll('find');
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') materializeAllSync();
     };
     let previousWidth = root.clientWidth;
     const onResize = () => {
@@ -263,14 +293,14 @@ export function MessageWindowingProvider({
           ? node.closest<HTMLElement>('[data-message-virtual-row="true"]')
           : node?.parentElement?.closest<HTMLElement>('[data-message-virtual-row="true"]');
         if (!shell) return;
-        const row = [...rows.current.values()].find((candidate) => candidate.element === shell || candidate.element?.contains(node));
+        const row = elementToRow.current.get(shell);
         if (row && !selectionPins.has(row.token)) selectionPins.set(row.token, pinRow(row.token, 'selection'));
       });
     };
     const onLayoutChange = (event: Event) => {
       const target = event.target;
       const shell = target instanceof Element ? target.closest<HTMLElement>('[data-message-virtual-row="true"]') : null;
-      const row = shell ? [...rows.current.values()].find((candidate) => candidate.element === shell) : undefined;
+      const row = shell ? elementToRow.current.get(shell) : undefined;
       if (row) {
         row.measured = false;
         row.height = estimateMessageHeight(row.message);
@@ -299,8 +329,9 @@ export function MessageWindowingProvider({
       navigationTimers.current.clear();
       rows.current.clear();
       byId.current.clear();
+      elementToRow.current = new WeakMap<Element, Row>();
     };
-  }, [conversationId, materializeAll, reportHeight, schedule, scrollableRef]);
+  }, [conversationId, materializeAllSync, reportHeight, schedule, scrollableRef]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

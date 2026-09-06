@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { CSSTransition } from 'react-transition-group';
@@ -60,7 +61,25 @@ function MessagesViewContent({
   );
 }
 
-function MessagesViewBody({ messagesTree, localize, fontSize, screenshotTargetRef, scrollButtonPreference, currentEditId, setCurrentEditId, scrollToBottomRef, scrollableRef, contentRef, messagesEndRef, showScrollButton, handleSmoothToRef, debouncedHandleScroll, conversationId }: any) {
+type MessagesViewBodyProps = {
+  messagesTree: TMessage[] | null | undefined;
+  localize: ReturnType<typeof useLocalize>;
+  fontSize: string;
+  screenshotTargetRef: ReturnType<typeof useScreenshot>['screenshotTargetRef'];
+  scrollButtonPreference: boolean;
+  currentEditId: number | string | null;
+  setCurrentEditId: Dispatch<SetStateAction<number | string | null>>;
+  scrollToBottomRef: RefObject<HTMLDivElement>;
+  scrollableRef: ReturnType<typeof useMessageScrolling>['scrollableRef'];
+  contentRef: ReturnType<typeof useMessageScrolling>['contentRef'];
+  messagesEndRef: ReturnType<typeof useMessageScrolling>['messagesEndRef'];
+  showScrollButton: ReturnType<typeof useMessageScrolling>['showScrollButton'];
+  handleSmoothToRef: ReturnType<typeof useMessageScrolling>['handleSmoothToRef'];
+  debouncedHandleScroll: ReturnType<typeof useMessageScrolling>['debouncedHandleScroll'];
+  conversationId?: string | null;
+};
+
+function MessagesViewBody({ messagesTree, localize, fontSize, screenshotTargetRef, scrollButtonPreference, currentEditId, setCurrentEditId, scrollToBottomRef, scrollableRef, contentRef, messagesEndRef, showScrollButton, handleSmoothToRef, debouncedHandleScroll, conversationId }: MessagesViewBodyProps) {
   const { materializeAll } = useMessageWindowing();
   const { registerMaterializer } = useScreenshot();
   useEffect(() => registerMaterializer?.(() => materializeAll('screenshot')), [registerMaterializer, materializeAll]);

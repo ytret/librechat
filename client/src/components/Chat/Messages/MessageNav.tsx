@@ -269,22 +269,38 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
     [scrollableRef],
   );
 
+  const focusMessage = useCallback((id: string) => {
+    const el = document.getElementById(id);
+    if (!el) {
+      return;
+    }
+    if (!el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '-1');
+    }
+    el.focus({ preventScroll: true });
+  }, []);
+
   const scrollToStart = useCallback(
-    async (id: string) => {
+    async (id: string, options?: { focus?: boolean }): Promise<boolean> => {
+      // Allocate the request token before any await so a slower, older request
+      // cannot resolve after a newer one and either cancel it or steal focus.
+      const token = ++scrollTokenRef.current;
       const el = id === MESSAGES_END_ID
         ? resolveEntryEl(id)
         : windowing
           ? await windowing.ensureMessageMounted(id)
           : resolveEntryEl(id);
-      if (!el) {
-        return;
+      if (token !== scrollTokenRef.current || !el) {
+        return false;
       }
       const container = el.closest<HTMLElement>('.scrollbar-gutter-stable');
       if (!container) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
+        if (options?.focus) {
+          focusMessage(id);
+        }
+        return true;
       }
-      const token = ++scrollTokenRef.current;
       const scrollMargin = scrollMarginRef.current || readScrollMargin(el);
       const startScroll = container.scrollTop;
       const start = performance.now();
@@ -306,8 +322,14 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
       };
 
       requestAnimationFrame(step);
+      // The target is now mounted with real geometry and the winning animation is
+      // scheduled. Focusing with preventScroll keeps the smooth scroll authoritative.
+      if (options?.focus) {
+        focusMessage(id);
+      }
+      return true;
     },
-    [resolveEntryEl, windowing],
+    [resolveEntryEl, windowing, focusMessage],
   );
 
   const scrollToImmediate = useCallback(
@@ -331,29 +353,17 @@ function MessageNav({ scrollableRef }: { scrollableRef: React.RefObject<HTMLDivE
     [resolveEntryEl, windowing],
   );
 
-  const focusMessage = useCallback((id: string) => {
-    const el = document.getElementById(id);
-    if (!el) {
-      return;
-    }
-    if (!el.hasAttribute('tabindex')) {
-      el.setAttribute('tabindex', '-1');
-    }
-    el.focus({ preventScroll: true });
-  }, []);
-
   const handleSelect = useCallback(
     (id: string) => {
       if (suppressClickRef.current) {
         suppressClickRef.current = false;
         return;
       }
-      void scrollToStart(id);
-      if (id !== MESSAGES_END_ID) {
-        focusMessage(id);
-      }
+      // Focus is applied by the winning navigation after the target is mounted
+      // and positioned, never before an async materialization completes.
+      void scrollToStart(id, { focus: id !== MESSAGES_END_ID });
     },
-    [scrollToStart, focusMessage],
+    [scrollToStart],
   );
 
   const focusNav = useCallback((): boolean => {

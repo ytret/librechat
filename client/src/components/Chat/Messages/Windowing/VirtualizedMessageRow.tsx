@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { TMessage } from 'librechat-data-provider';
 import { getMessageAriaLabel } from '~/utils';
 import { useLocalize } from '~/hooks';
@@ -9,16 +9,26 @@ import type { PinReason, RowToken } from './types';
 
 export function VirtualizedMessageRow({ messageId, message, forceMounted = false, ariaLabel, children }: { messageId: string; message: TMessage; forceMounted?: boolean; ariaLabel?: string; children: React.ReactNode }) {
   const localize = useLocalize();
-  const { registerRow, updateRowId, updateRowState, reportHeight, pinRow } = useMessageWindowing();
+  const { registerRow, updateRowId, updateRowState, pinRow } = useMessageWindowing();
   const { latestMessageId } = useMessagesState();
   const { isSubmitting } = useMessagesSubmission();
   const latestPinned = messageId === latestMessageId && isSubmitting;
   const token = useRef<RowToken>(Symbol('message-row'));
   const elementRef = useRef<HTMLDivElement>(null);
   const previousId = useRef(messageId);
-  const [mounted, setMounted] = useState(forceMounted || latestPinned);
+  const [mounted, setMountedState] = useState(forceMounted || latestPinned);
   const height = useRef(estimateMessageHeight(message));
   const label = ariaLabel ?? getMessageAriaLabel(message, localize);
+
+  // The provider owns the single shared ResizeObserver. When it unmounts this row
+  // it hands back the latest measured height so the placeholder preserves real
+  // geometry instead of regressing to the estimate.
+  const setMounted = useCallback((value: boolean, measuredHeight?: number) => {
+    if (!value && typeof measuredHeight === 'number' && measuredHeight > 0) {
+      height.current = measuredHeight;
+    }
+    setMountedState(value);
+  }, []);
 
   useEffect(() => {
     const unregister = registerRow({ token: token.current, id: messageId, message, element: elementRef.current, forceMounted: forceMounted || latestPinned, setMounted });
@@ -28,10 +38,10 @@ export function VirtualizedMessageRow({ messageId, message, forceMounted = false
   useEffect(() => {
     updateRowState(token.current, message, forceMounted || latestPinned);
     // Keep an unmounted shell in sync with content edits. Mounted rows retain
-    // their measured height and let ResizeObserver provide the authoritative value.
+    // their measured height and let the provider ResizeObserver supply the
+    // authoritative value at unmount time.
     if (!mounted) height.current = estimateMessageHeight(message);
   }, [message, forceMounted, latestPinned, mounted, updateRowState]);
-  useEffect(() => { const node = elementRef.current; if (!node || typeof ResizeObserver === 'undefined') return; const observer = new ResizeObserver(([entry]) => { const value = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height; if (value > 0) { height.current = value; reportHeight(token.current, value); } }); observer.observe(node); return () => observer.disconnect(); }, [reportHeight]);
   useEffect(() => {
     const node = elementRef.current;
     if (!node) return;
