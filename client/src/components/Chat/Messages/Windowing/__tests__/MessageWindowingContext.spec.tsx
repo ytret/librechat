@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MessageWindowingProvider, useMessageWindowing } from '../MessageWindowingContext';
+import {
+  MessageWindowingProvider,
+  NAVIGATION_MEASUREMENT_TIMEOUT_MS,
+  useMessageWindowing,
+} from '../MessageWindowingContext';
 import { estimateMessageHeight } from '../messageHeightEstimate';
 import type { TMessage } from 'librechat-data-provider';
 
@@ -279,12 +283,8 @@ describe('MessageWindowingProvider', () => {
     expect(screen.getByTestId('message-2-content')).toBeInTheDocument();
   });
 
-  it('resolves navigation once a real measurement arrives, not only after animation frames', async () => {
-    const rafQueue: FrameRequestCallback[] = [];
-    global.requestAnimationFrame = ((callback: FrameRequestCallback) => {
-      rafQueue.push(callback);
-      return rafQueue.length;
-    }) as typeof requestAnimationFrame;
+  it('resolves navigation once a real measurement arrives', async () => {
+    jest.useFakeTimers();
     try {
       let resolved = false;
       function Requester() {
@@ -308,10 +308,8 @@ describe('MessageWindowingProvider', () => {
         </Harness>,
       );
       act(() => screen.getByRole('button', { name: 'jump' }).click());
-      // Animation frames are queued but not flushed, so the bounded fallback has
-      // not resolved yet.
+      // No measurement yet, so the jump must still be pending.
       expect(resolved).toBe(false);
-      // A real ResizeObserver measurement resolves the navigation immediately.
       const resize = MockResizeObserver.instances[0];
       act(() =>
         resize.callback(
@@ -324,7 +322,114 @@ describe('MessageWindowingProvider', () => {
       });
       expect(resolved).toBe(true);
     } finally {
-      global.requestAnimationFrame = originalRAF;
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not resolve on a stale placeholder measurement; waits for the post-mount measurement', async () => {
+    jest.useFakeTimers();
+    try {
+      let rowRect: DOMRect = { top: 5000, bottom: 5100, height: 100 } as DOMRect;
+      const rectSpy = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains('scroll-root')) return ROOT_RECT;
+          return rowRect;
+        });
+      let resolved = false;
+      function Requester() {
+        const { ensureMessageMounted } = useMessageWindowing();
+        return (
+          <button
+            onClick={() => {
+              void ensureMessageMounted('measured').then(() => {
+                resolved = true;
+              });
+            }}
+          >
+            jump
+          </button>
+        );
+      }
+      render(
+        <Harness>
+          <MeasuredRow id="measured" forceMounted={false} />
+          <Requester />
+        </Harness>,
+      );
+      const shell = screen.getByTestId('measured');
+      const resize = MockResizeObserver.instances[0];
+      // 1. The placeholder receives an initial measurement (measureVersion=1).
+      act(() => resize.callback([resizeEntry(shell, 500)], resize as unknown as ResizeObserver));
+      expect(shell).toHaveAttribute('data-mounted', 'false');
+
+      // 2. Navigation requests the row, mounting it.
+      act(() => screen.getByRole('button', { name: 'jump' }).click());
+      expect(shell).toHaveAttribute('data-mounted', 'true');
+
+      // 3. The stale placeholder measurement must not resolve the request.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(resolved).toBe(false);
+
+      // 4. Only the mounted subtree's new measurement resolves it.
+      act(() => resize.callback([resizeEntry(shell, 700)], resize as unknown as ResizeObserver));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(resolved).toBe(true);
+      rectSpy.mockRestore();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('resolves navigation on a bounded timeout when no post-mount measurement arrives', async () => {
+    jest.useFakeTimers();
+    try {
+      let rowRect: DOMRect = { top: 5000, bottom: 5100, height: 100 } as DOMRect;
+      const rectSpy = jest
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.classList.contains('scroll-root')) return ROOT_RECT;
+          return rowRect;
+        });
+      let resolved = false;
+      function Requester() {
+        const { ensureMessageMounted } = useMessageWindowing();
+        return (
+          <button
+            onClick={() => {
+              void ensureMessageMounted('measured').then(() => {
+                resolved = true;
+              });
+            }}
+          >
+            jump
+          </button>
+        );
+      }
+      render(
+        <Harness>
+          <MeasuredRow id="measured" forceMounted={false} />
+          <Requester />
+        </Harness>,
+      );
+      const shell = screen.getByTestId('measured');
+      act(() => screen.getByRole('button', { name: 'jump' }).click());
+      expect(shell).toHaveAttribute('data-mounted', 'true');
+      expect(resolved).toBe(false);
+
+      // No new measurement fires, so the bounded timeout is the only release.
+      await act(async () => {
+        jest.advanceTimersByTime(NAVIGATION_MEASUREMENT_TIMEOUT_MS);
+        await Promise.resolve();
+      });
+      expect(resolved).toBe(true);
+      rectSpy.mockRestore();
+    } finally {
+      jest.useRealTimers();
     }
   });
 
