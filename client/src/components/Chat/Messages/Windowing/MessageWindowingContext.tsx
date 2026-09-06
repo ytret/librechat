@@ -107,6 +107,14 @@ export function MessageWindowingProvider({
     };
     rows.current.set(registration.token, row);
     byId.current.set(registration.id, row);
+    const root = getScrollRoot(scrollableRef);
+    if (!registration.forceMounted && registration.element && root) {
+      const bounds = root.getBoundingClientRect();
+      const box = registration.element.getBoundingClientRect();
+      const initiallyNear = box.bottom >= bounds.top - OVERSCAN_PX && box.top <= bounds.bottom + OVERSCAN_PX;
+      row.mounted = initiallyNear;
+      registration.setMounted(initiallyNear);
+    }
     if (observer.current && registration.element) observer.current.observe(registration.element);
     if (resize.current && registration.element) resize.current.observe(registration.element);
     schedule();
@@ -119,7 +127,7 @@ export function MessageWindowingProvider({
       if (byId.current.get(registration.id) === row) byId.current.delete(registration.id);
       row.waiters.splice(0).forEach((resolve) => resolve(null));
     };
-  }, [schedule]);
+  }, [schedule, scrollableRef]);
 
   const updateRowId = useCallback((token: RowToken, oldId: string, newId: string) => {
     const row = rows.current.get(token);
@@ -132,10 +140,18 @@ export function MessageWindowingProvider({
   const updateRowState = useCallback((token: RowToken, message: RowRegistration['message'], forceMounted: boolean) => {
     const row = rows.current.get(token);
     if (!row) return;
+    const forceChanged = row.forceMounted !== forceMounted;
+    // Historical edits invalidate the placeholder estimate. Streaming rows stay
+    // measured continuously by ResizeObserver and must not reset on every token.
+    if (row.message !== message && !row.forceMounted && !forceMounted) {
+      row.measured = false;
+      row.height = estimateMessageHeight(message);
+    }
     row.message = message;
     row.forceMounted = forceMounted;
     if (forceMounted) setMounted(row, true);
-  }, [setMounted]);
+    else if (forceChanged) schedule();
+  }, [schedule, setMounted]);
 
   const isMounted = useCallback((token: RowToken) => rows.current.get(token)?.mounted ?? false, []);
 
@@ -202,6 +218,13 @@ export function MessageWindowingProvider({
           if (row) reportHeight(row.token, entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
         }))
       : undefined;
+    // Child effects can register rows before this provider effect creates the
+    // observers. Attach those already-mounted shells as well.
+    rows.current.forEach((row) => {
+      if (!row.element) return;
+      observer.current?.observe(row.element);
+      resize.current?.observe(row.element);
+    });
     const onFind = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') void materializeAll('find');
     };
