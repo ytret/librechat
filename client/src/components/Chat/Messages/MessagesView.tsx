@@ -38,7 +38,7 @@ function MessagesViewContent({
   const { conversationId } = conversation ?? {};
 
   return (
-    <MessageWindowingProvider scrollableRef={scrollableRef} conversationId={conversationId}>
+    <MessageWindowingProvider key={conversationId ?? 'no-conversation'} scrollableRef={scrollableRef} conversationId={conversationId}>
     <MessagesViewBody
       messagesTree={_messagesTree}
       localize={localize}
