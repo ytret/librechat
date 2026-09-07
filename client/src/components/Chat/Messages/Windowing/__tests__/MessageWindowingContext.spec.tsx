@@ -65,10 +65,20 @@ function RegisteredRow({ id, forceMounted = false }: { id: string; forceMounted?
   );
 }
 
-function Harness({ children }: { children: React.ReactNode }) {
+function Harness({
+  children,
+  pinnedToBottomRef,
+}: {
+  children: React.ReactNode;
+  pinnedToBottomRef?: React.RefObject<boolean>;
+}) {
   const scrollableRef = useRef<HTMLDivElement>(null);
   return (
-    <MessageWindowingProvider scrollableRef={scrollableRef} conversationId="conversation">
+    <MessageWindowingProvider
+      scrollableRef={scrollableRef}
+      conversationId="conversation"
+      pinnedToBottomRef={pinnedToBottomRef}
+    >
       <div ref={scrollableRef} className="scroll-root">
         {children}
       </div>
@@ -645,7 +655,7 @@ describe('MessageWindowingProvider', () => {
 
     // Renders an unmounted (placeholder) row far above the viewport and mounts it
     // on demand, exercising the placeholder→mounted transition in isolation.
-    function renderPlaceholderScenario() {
+    function renderPlaceholderScenario(pinnedToBottomRef?: React.RefObject<boolean>) {
       let rowRect: DOMRect = FAR_ABOVE;
       const rectSpy = jest
         .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
@@ -655,7 +665,7 @@ describe('MessageWindowingProvider', () => {
           return ROOT_RECT;
         });
       render(
-        <Harness>
+        <Harness pinnedToBottomRef={pinnedToBottomRef}>
           <MeasuredRow id="measured" forceMounted={false} />
           <MountButton id="measured" />
         </Harness>,
@@ -809,16 +819,51 @@ describe('MessageWindowingProvider', () => {
       rectSpy.mockRestore();
     });
 
-    it('does not correct when the user is bottom-pinned', async () => {
-      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
-      defineScroll(root, { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 });
+    it('clamps to the bottom when pinned and content changes (above the viewport)', async () => {
+      const pinnedToBottomRef = { current: true } as React.RefObject<boolean>;
+      const { rectSpy, root, resize, shell, setRowRect } =
+        renderPlaceholderScenario(pinnedToBottomRef);
+      // scrollTop has drifted off the bottom (e.g. content grew under a pinned
+      // viewport). The pinned flag is sticky, so any later measurement re-clamps.
+      defineScroll(root, { scrollTop: 1000, scrollHeight: 2000, clientHeight: 500 });
       setRowRect(ABOVE);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      expect(shell).toHaveAttribute('data-mounted', 'true');
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
+      // Absolute clamp: scrollTop = scrollHeight - clientHeight = 1500.
+      expect(root.scrollTop).toBe(1500);
+      rectSpy.mockRestore();
+    });
+
+    it('clamps to the bottom when pinned and content changes (below the viewport)', async () => {
+      const pinnedToBottomRef = { current: true } as React.RefObject<boolean>;
+      const { rectSpy, root, resize, shell, setRowRect } =
+        renderPlaceholderScenario(pinnedToBottomRef);
+      defineScroll(root, { scrollTop: 1000, scrollHeight: 2000, clientHeight: 500 });
+      setRowRect(BELOW);
       await act(async () => {
         screen.getByRole('button', { name: 'mount measured' }).click();
         await Promise.resolve();
       });
       act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
       expect(root.scrollTop).toBe(1500);
+      rectSpy.mockRestore();
+    });
+
+    it('does not clamp when the user is not pinned', async () => {
+      const { rectSpy, root, resize, shell, setRowRect } = renderPlaceholderScenario();
+      defineScroll(root, { scrollTop: 1000, scrollHeight: 2000, clientHeight: 500 });
+      setRowRect(BELOW);
+      await act(async () => {
+        screen.getByRole('button', { name: 'mount measured' }).click();
+        await Promise.resolve();
+      });
+      act(() => resize.callback([resizeEntry(shell, 600)], resize as unknown as ResizeObserver));
+      // Not pinned: a below-viewport row does not move the visible content.
+      expect(root.scrollTop).toBe(1000);
       rectSpy.mockRestore();
     });
 
