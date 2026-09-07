@@ -29,6 +29,12 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const isNearBottomRef = useRef(true);
+  // Sticky "user wants to be at the bottom" signal, distinct from isNearBottomRef
+  // (which can flip false as soon as growing content pushes the end marker beyond
+  // the 240px margin). It is set synchronously when we programmatically scroll to
+  // the bottom and cleared only on a deliberate scroll-away, so it survives the
+  // multi-batch settling of placeholder → measured heights on conversation load.
+  const pinnedToBottomRef = useRef(false);
   const prevScrollTopRef = useRef<number | null>(null);
   const suppressNextResizeFollowRef = useRef(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -94,6 +100,7 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
   const scrollCallback = () => {
     reconcileMessageContentLayout(scrollableRef.current);
     isNearBottomRef.current = true;
+    pinnedToBottomRef.current = true;
     debouncedSetShowScrollButton(false);
   };
 
@@ -126,6 +133,17 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
       ? scrollEl.scrollHeight - scrollTop - scrollEl.clientHeight
       : 0;
     isNearBottomRef.current = distanceFromBottom <= resizeFollowThreshold;
+
+    // Keep the sticky pinned flag in sync with deliberate user scrolling. A
+    // programmatic re-clamp (content shrink while pinned) also fires a scroll event
+    // with a negative direction but lands exactly at the bottom, so the
+    // `distanceFromBottom > bottomSnapEpsilon` guard excludes it — matching the
+    // abortScroll logic below.
+    if (direction < 0 && distanceFromBottom > bottomSnapEpsilon) {
+      pinnedToBottomRef.current = false;
+    } else if (direction > 0 && isNearBottomRef.current) {
+      pinnedToBottomRef.current = true;
+    }
 
     if (isSubmittingRef.current) {
       if (direction < 0 && distanceFromBottom > bottomSnapEpsilon) {
@@ -271,5 +289,6 @@ export default function useMessageScrolling(messagesTree?: TMessage[] | null) {
     showScrollButton,
     handleSmoothToRef,
     debouncedHandleScroll,
+    pinnedToBottomRef,
   };
 }

@@ -34,6 +34,7 @@ function MessagesViewContent({
     showScrollButton,
     handleSmoothToRef,
     debouncedHandleScroll,
+    pinnedToBottomRef,
   } = useMessageScrolling(_messagesTree);
 
   const { conversationId } = conversation ?? {};
@@ -43,6 +44,7 @@ function MessagesViewContent({
       key={conversationId ?? 'no-conversation'}
       scrollableRef={scrollableRef}
       conversationId={conversationId}
+      pinnedToBottomRef={pinnedToBottomRef}
     >
       <MessagesViewBody
         messagesTree={_messagesTree}

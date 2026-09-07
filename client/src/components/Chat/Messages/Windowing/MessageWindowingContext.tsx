@@ -48,14 +48,24 @@ export function MessageWindowingProvider({
   children,
   scrollableRef,
   conversationId,
+  pinnedToBottomRef,
 }: {
   children: React.ReactNode;
   scrollableRef: React.RefObject<HTMLElement>;
   conversationId?: string | null;
+  /** Sticky "user is pinned to the bottom" signal, owned by useMessageScrolling.
+   *  Set synchronously when the app programmatically scrolls to the bottom and
+   *  cleared only on a deliberate scroll-away. Unlike a per-row capture or a
+   *  scroll-event read, it survives the multi-batch settling of placeholder →
+   *  measured heights (where rows above the viewport grow before the bottom row
+   *  mounts). Optional so the provider can be rendered in isolation (tests). */
+  pinnedToBottomRef?: React.RefObject<boolean>;
 }) {
   const rows = useRef(new Map<RowToken, Row>());
   const byId = useRef(new Map<string, Row>());
   const elementToRow = useRef(new WeakMap<Element, Row>());
+  const pinnedToBottomFallbackRef = useRef(false);
+  const pinnedToBottom = pinnedToBottomRef ?? pinnedToBottomFallbackRef;
   const frame = useRef<number>();
   const correctionFrame = useRef<number>();
   const pendingCorrection = useRef(0);
@@ -135,12 +145,32 @@ export function MessageWindowingProvider({
       row.pendingAnchorCorrection = false;
       if (Math.abs(delta) < 0.1) return;
       const root = getScrollRoot(scrollableRef);
+      if (!root) return;
+      if (pinnedToBottom.current) {
+        // The user is pinned to the bottom. The initial scroll-to-end ran against
+        // placeholder heights, so as each row's real height replaces its estimate
+        // the pinned viewport must follow the new bottom — otherwise it lands in
+        // the middle of the last message. Clamping to the bottom is absolute and
+        // idempotent, so it is correct regardless of which row changed, whether it
+        // grew or shrank, and in what order the many rows mount/measure.
+        if (correctionFrame.current == null) {
+          correctionFrame.current = requestAnimationFrame(() => {
+            correctionFrame.current = undefined;
+            pendingCorrection.current = 0;
+            if (root.isConnected) {
+              root.scrollTop = root.scrollHeight - root.clientHeight;
+            }
+          });
+        }
+        return;
+      }
+      // Not pinned: a replacement above the viewport changes the scroll coordinate
+      // of everything below it, so keep the visible content stable.
       const box = row.element?.getBoundingClientRect();
       const rootBox = root?.getBoundingClientRect();
-      const atBottom = root ? root.scrollHeight - root.scrollTop - root.clientHeight < 4 : false;
-      // A replacement above the viewport changes the scroll coordinate of everything below it.
-      // Accumulate corrections so a stream or a batch of ResizeObserver entries writes once.
-      if (root && box && rootBox && box.bottom <= rootBox.top && !atBottom) {
+      if (rootBox && box && box.bottom <= rootBox.top) {
+        // Accumulate corrections so a stream or a batch of ResizeObserver entries
+        // writes once per frame.
         pendingCorrection.current += delta;
         if (correctionFrame.current == null) {
           correctionFrame.current = requestAnimationFrame(() => {
@@ -152,7 +182,7 @@ export function MessageWindowingProvider({
         }
       }
     },
-    [scrollableRef],
+    [pinnedToBottom, scrollableRef],
   );
 
   const registerRow = useCallback(
