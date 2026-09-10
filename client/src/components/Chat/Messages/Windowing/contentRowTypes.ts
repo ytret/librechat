@@ -237,7 +237,13 @@ export type ContentRowWindowingContextValue = {
  */
 export type ContentRowWindowingRuntime = Pick<
   ContentRowWindowingContextValue,
-  'registerRow' | 'updateRow' | 'getLayoutBucket' | 'ensureMessageContentMounted' | 'getDiagnostics'
+  | 'registerRow'
+  | 'updateRow'
+  | 'registerMountedContent'
+  | 'reportMountedContentHeight'
+  | 'getLayoutBucket'
+  | 'ensureMessageContentMounted'
+  | 'getDiagnostics'
 >;
 
 /* -------------------------------------------------------------------------- */
@@ -278,6 +284,12 @@ export type ContentRowRecord = {
   /** Reason the row can never unmount, e.g. a settlement timeout (§8.1). */
   pinnedByPolicy: ContentRowPinReason | null;
   pins: Set<ContentRowPinReason>;
+  /**
+   * Released when a caller waiting on a current-generation measurement can proceed
+   * (§20.7.2). Declared with the record so the settle path does not have to grow
+   * the record shape later.
+   */
+  measurementWaiters: Set<() => void>;
   setMounted(mounted: boolean, generation: number, height?: number): void;
   commitWaiters: Set<() => void>;
 };

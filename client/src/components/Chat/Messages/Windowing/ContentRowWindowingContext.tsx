@@ -29,8 +29,10 @@ import {
   installContentRowDiagnostics,
 } from './contentRowDiagnostics';
 import { computeLayoutBucket, nextGeneration } from './contentRowIdentity';
+import { classifyMeasurement } from './contentRowIdentity';
 import type {
   ContentRowDiagnosticsSnapshot,
+  ContentRowMeasurementSource,
   ContentRowRecord,
   ContentRowReflowState,
   ContentRowRegistration,
@@ -39,6 +41,7 @@ import type {
   ContentRowWindowingRuntime,
   LayoutBucket,
   MessageScopeToken,
+  MountedContentRegistration,
 } from './contentRowTypes';
 
 /** Observer mapping for a mounted content element (§7.4). */
@@ -92,6 +95,15 @@ function messageShellOf(record: ContentRowRecord): HTMLElement | null {
   return shell ?? null;
 }
 
+/**
+ * Border-box height for the layout-effect path, which has no ResizeObserver entry.
+ * The observer path prefers `borderBoxSize[0].blockSize` and only falls back to the
+ * content rect (§12).
+ */
+export function readElementBorderBoxHeight(element: HTMLElement): number {
+  return element.getBoundingClientRect().height;
+}
+
 export function ContentRowWindowingProvider({
   children,
   scrollRootRef,
@@ -118,6 +130,7 @@ export function ContentRowWindowingProvider({
   const layoutBucket = useRef<LayoutBucket | null>(null);
   const reflowState = useRef<ContentRowReflowState>('idle');
   const conversationRef = useRef<string | null>(conversationId ?? null);
+  const resizeObserver = useRef<ResizeObserver | undefined>(undefined);
 
   const currentBucket = useCallback((): LayoutBucket => {
     const bucket = readLayoutBucket(scrollRootRef.current);
@@ -189,6 +202,13 @@ export function ContentRowWindowingProvider({
       // Any waiter must be released; nothing may hang on a row that no longer exists.
       record.commitWaiters.forEach((resolve) => resolve());
       record.commitWaiters.clear();
+      record.measurementWaiters.forEach((resolve) => resolve());
+      record.measurementWaiters.clear();
+      if (record.measuredElement) {
+        resizeObserver.current?.unobserve(record.measuredElement);
+        mountedElements.current.delete(record.measuredElement);
+        record.measuredElement = null;
+      }
       diagnostics.current.recordUnregistration();
     },
     [unindexByMessage],
@@ -223,6 +243,7 @@ export function ContentRowWindowingProvider({
         oversized: false,
         pinnedByPolicy: null,
         pins: new Set(),
+        measurementWaiters: new Set(),
         setMounted: registration.setMounted,
         commitWaiters: new Set(),
       };
@@ -266,6 +287,108 @@ export function ContentRowWindowingProvider({
   const getLayoutBucket = useCallback(() => currentBucket(), [currentBucket]);
 
   /**
+   * Accept a measured height for a row's current generation (§12).
+   *
+   * The seven acceptance rules live in `classifyMeasurement` and are applied here in
+   * full. A rejected observation is a strict no-op: it cannot overwrite a height, mark
+   * the row measured or settled, release a waiter, change bottom pinning, or write
+   * scroll position.
+   */
+  const reportMountedContentHeight = useCallback(
+    (
+      token: ContentRowToken,
+      generation: number,
+      layoutBucketOfReport: LayoutBucket,
+      element: HTMLElement,
+      height: number,
+      source: ContentRowMeasurementSource,
+    ) => {
+      const record = rows.current.get(token);
+      const verdict = classifyMeasurement(record, {
+        element,
+        generation,
+        layoutBucket: layoutBucketOfReport,
+        height,
+      });
+      if (!verdict.accepted) {
+        diagnostics.current.recordRejectedMeasurement(verdict.reason);
+        return;
+      }
+      if (record == null) {
+        return;
+      }
+      // Tripwire: an accepted observation must still satisfy the invariants the
+      // acceptance test relies on. If this ever fires, the acceptance test and this
+      // check disagreed, and accepting the measurement was wrong.
+      if (
+        !record.mounted ||
+        record.measuredElement !== element ||
+        record.generation !== generation ||
+        record.measuredFingerprint !== record.fingerprint
+      ) {
+        diagnostics.current.recordStaleMeasurementAccepted();
+      }
+      // §12: the browser value is retained for placeholders; rounding is diagnostics only.
+      record.measuredHeight = height;
+      record.settled = false;
+      record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
+      diagnostics.current.recordAcceptedMeasurement(source);
+      if (record.measurementWaiters.size > 0) {
+        record.measurementWaiters.forEach((resolve) => resolve());
+        record.measurementWaiters.clear();
+      }
+    },
+    [],
+  );
+
+  /**
+   * Bind a row's generation-specific measured element (the inner element, never the
+   * persistent shell) to the shared resize observer. The observer is the only resize
+   * target, so a placeholder shell can never report a geometric measurement (§20.2.3).
+   */
+  const registerMountedContent = useCallback((registration: MountedContentRegistration) => {
+    const record = rows.current.get(registration.token);
+    if (!record || record.generation !== registration.generation) {
+      // A registration from a superseded generation must not become the target.
+      return () => {};
+    }
+    const previous = record.measuredElement;
+    if (previous && previous !== registration.element) {
+      resizeObserver.current?.unobserve(previous);
+      mountedElements.current.delete(previous);
+    }
+    const bucketChanged = record.layoutBucket !== registration.layoutBucket;
+    if (bucketChanged) {
+      // §13 — a bucket change invalidates the measurement. The fingerprint capture
+      // stays valid, so the next measurement in the new bucket is accepted.
+      record.layoutBucket = registration.layoutBucket;
+    }
+    const elementChanged = previous !== registration.element;
+    if (elementChanged || bucketChanged) {
+      record.measuredHeight = undefined;
+      record.settled = false;
+      record.mountState = 'MOUNTED_UNMEASURED';
+    }
+    record.measuredElement = registration.element;
+    mountedElements.current.set(registration.element, {
+      token: registration.token,
+      generation: registration.generation,
+      layoutBucket: registration.layoutBucket,
+    });
+    resizeObserver.current?.observe(registration.element);
+    return () => {
+      const mapping = mountedElements.current.get(registration.element);
+      if (mapping && mapping.generation === registration.generation) {
+        mountedElements.current.delete(registration.element);
+        resizeObserver.current?.unobserve(registration.element);
+      }
+      if (record.measuredElement === registration.element) {
+        record.measuredElement = null;
+      }
+    };
+  }, []);
+
+  /**
    * Resolve the message shell that owns a message's rows, mounting them on the way.
    *
    * Task 2.8 adds the current-generation measurement wait required by §20.7.2 and
@@ -300,12 +423,64 @@ export function ContentRowWindowingProvider({
     () => ({
       registerRow,
       updateRow,
+      registerMountedContent,
+      reportMountedContentHeight,
       getLayoutBucket,
       ensureMessageContentMounted,
       getDiagnostics,
     }),
-    [registerRow, updateRow, getLayoutBucket, ensureMessageContentMounted, getDiagnostics],
+    [
+      registerRow,
+      updateRow,
+      registerMountedContent,
+      reportMountedContentHeight,
+      getLayoutBucket,
+      ensureMessageContentMounted,
+      getDiagnostics,
+    ],
   );
+
+  /**
+   * One provider-level resize observer for mounted inner content elements only.
+   *
+   * Rows register their element from a layout effect, which runs before this effect on
+   * first mount, so elements registered earlier are attached here as well. A queued
+   * callback for an element whose generation has been superseded is rejected because
+   * the mapping is looked up by element and validated against the record (§7.4).
+   */
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      entries.forEach((entry) => {
+        const mapping = mountedElements.current.get(entry.target);
+        if (!mapping) {
+          diagnostics.current.recordRejectedMeasurement('unknown-element');
+          return;
+        }
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+        reportMountedContentHeight(
+          mapping.token,
+          mapping.generation,
+          mapping.layoutBucket,
+          entry.target as HTMLElement,
+          height,
+          'resize-observer',
+        );
+      });
+    });
+    resizeObserver.current = observer;
+    rows.current.forEach((record) => {
+      if (record.mounted && record.measuredElement) {
+        observer.observe(record.measuredElement);
+      }
+    });
+    return () => {
+      observer.disconnect();
+      resizeObserver.current = undefined;
+    };
+  }, [reportMountedContentHeight]);
 
   // Development-only console handle (§23). Production installs nothing.
   useEffect(() => {
