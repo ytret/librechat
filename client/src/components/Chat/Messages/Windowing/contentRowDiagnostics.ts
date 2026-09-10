@@ -25,6 +25,7 @@ import {
   type ContentRowMaterializeReason,
   type ContentRowMountState,
   type ContentRowPinReason,
+  type ContentRowRecord,
   type ContentRowRejectReason,
   type ContentRowReflowState,
   type ContentRowTimeoutDetail,
@@ -61,8 +62,6 @@ export type ContentRowDiagnosticsCollector = {
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
   completeWarmUp(at?: number): void;
-  setLayoutBucket(bucket: LayoutBucket | null): void;
-  setReflowState(state: ContentRowReflowState): void;
   snapshot(live: ContentRowDiagnosticsLive): ContentRowDiagnosticsSnapshot;
   reset(): void;
 };
@@ -135,10 +134,70 @@ export function createEmptyDiagnosticsLive(): ContentRowDiagnosticsLive {
     totalByKind: createKindCountMap(),
     mountedByKind: createKindCountMap(),
     mountStates: createMountStateCountMap(),
-    measuredHeights: [],
+    measuredHeightDistribution: summarizeValues([]),
     layoutBucket: null,
     reflowState: 'idle',
   };
+}
+
+/**
+ * Derive the §23 live section from the provider's registry.
+ *
+ * Pure over records, so the counting rules can be unit tested without a browser.
+ *
+ * - `unmeasuredRows` — no accepted height for the current generation.
+ * - `unsettledRows` — mounted but not yet settled (and therefore not
+ *   unmount-eligible).
+ * - `staleRows` — the measurement in hand was taken under a fingerprint that no
+ *   longer describes the source. Non-zero outside a transition means the
+ *   invalidation path leaked.
+ */
+export function createLiveDiagnosticsState(
+  records: Iterable<ContentRowRecord>,
+  state: { layoutBucket: LayoutBucket | null; reflowState: ContentRowReflowState },
+): ContentRowDiagnosticsLive {
+  const live = createEmptyDiagnosticsLive();
+  live.layoutBucket = state.layoutBucket;
+  live.reflowState = state.reflowState;
+  const heights: number[] = [];
+
+  for (const record of records) {
+    live.registeredRows += 1;
+    live.totalByKind[record.kind] += 1;
+    live.mountStates[record.mountState] += 1;
+
+    if (record.mounted) {
+      live.mountedRows += 1;
+      live.mountedByKind[record.kind] += 1;
+    } else {
+      live.placeholderRows += 1;
+    }
+
+    if (record.measuredHeight == null) {
+      live.unmeasuredRows += 1;
+    } else {
+      heights.push(record.measuredHeight);
+    }
+
+    if (record.mounted && !record.settled) {
+      live.unsettledRows += 1;
+    }
+    if (record.measuredFingerprint !== record.fingerprint) {
+      live.staleRows += 1;
+    }
+    if (record.forceMounted) {
+      live.forcedRows += 1;
+    }
+    if (record.oversized) {
+      live.oversizedRows += 1;
+    }
+    if (record.policy === 'always-mounted' || record.pinnedByPolicy != null) {
+      live.alwaysMountedRows += 1;
+    }
+  }
+
+  live.measuredHeightDistribution = summarizeValues(heights);
+  return live;
 }
 
 /**
@@ -213,8 +272,6 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let warmUpStartedAt: number | null = null;
   let warmUpDurationMs: number | null = null;
   let warmUpComplete = false;
-  let layoutBucket: LayoutBucket | null = null;
-  let reflowState: ContentRowReflowState = 'idle';
 
   let rejectedByReason = createRejectReasonCountMap();
   let pinsByReason = createPinReasonCountMap();
@@ -288,17 +345,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       warmUpComplete = true;
       warmUpDurationMs = warmUpStartedAt == null ? null : at - warmUpStartedAt;
     },
-    setLayoutBucket(bucket) {
-      layoutBucket = bucket;
-    },
-    setReflowState(state) {
-      reflowState = state;
-    },
     snapshot(live) {
       return {
         ...live,
-        layoutBucket,
-        reflowState,
         registrations,
         unregistrations,
         acceptedMeasurements,
@@ -342,8 +391,6 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       warmUpStartedAt = null;
       warmUpDurationMs = null;
       warmUpComplete = false;
-      layoutBucket = null;
-      reflowState = 'idle';
       rejectedByReason = createRejectReasonCountMap();
       pinsByReason = createPinReasonCountMap();
       settlementTimeoutDetails.length = 0;

@@ -208,6 +208,12 @@ export type ContentRowWindowingContextValue = {
   notifyLayoutChange(scope: { token?: ContentRowToken; messageId?: string }): void;
   getDiagnostics(): ContentRowDiagnosticsSnapshot;
   /**
+   * Extension beyond §7.2. §7.2's `registerMountedContent` requires the caller to
+   * supply the layout bucket, so a row needs a way to read the provider's current
+   * bucket. The provider remains the owner of bucket changes (§12, §13).
+   */
+  getLayoutBucket(): LayoutBucket;
+  /**
    * Extension beyond §7.2. §8.2 requires rows with asynchronous renderers
    * (images, Mermaid, artifacts) to "report ready" but does not name an API.
    * A row registers a promise that must settle before the row may become settled
@@ -220,6 +226,20 @@ export type ContentRowWindowingContextValue = {
   ): () => void;
 };
 
+/**
+ * The subset of the §7.2 interface a consumer may use at the current stage.
+ *
+ * Stage 2 grows this monotonically (2.3 adds measurement reporting, 2.4 settlement,
+ * 2.8 pins and materialization) and task 2.8 asserts the provider satisfies the full
+ * `ContentRowWindowingContextValue` with `satisfies`. Keeping the consumer-facing type
+ * narrow means an intermediate commit never exposes a member whose implementation has
+ * not landed.
+ */
+export type ContentRowWindowingRuntime = Pick<
+  ContentRowWindowingContextValue,
+  'registerRow' | 'updateRow' | 'getLayoutBucket' | 'ensureMessageContentMounted' | 'getDiagnostics'
+>;
+
 /* -------------------------------------------------------------------------- */
 /* §7.3 registry record                                                       */
 /* -------------------------------------------------------------------------- */
@@ -228,6 +248,12 @@ export type ContentRowRecord = {
   token: ContentRowToken;
   scopeToken: MessageScopeToken;
   messageId: string;
+  /**
+   * Conversation the record was registered in. Not part of §7.3: it exists so a
+   * conversation change can invalidate rows whose component position was reused
+   * without racing rows registering for the new conversation in the same commit.
+   */
+  conversationId: string | null;
   debugKey: string;
   kind: ContentRowKind;
   fingerprint: string;
@@ -309,8 +335,8 @@ export type ContentRowDiagnosticsLive = {
   totalByKind: Record<ContentRowKind, number>;
   mountedByKind: Record<ContentRowKind, number>;
   mountStates: Record<ContentRowMountState, number>;
-  /** Measured heights of all rows that currently hold one. */
-  measuredHeights: number[];
+  /** Statistic over the measured heights of all rows that currently hold one. */
+  measuredHeightDistribution: ContentRowValueStats;
   layoutBucket: LayoutBucket | null;
   reflowState: ContentRowReflowState;
 };

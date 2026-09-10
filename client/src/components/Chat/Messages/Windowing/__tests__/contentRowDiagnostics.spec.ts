@@ -2,6 +2,7 @@ import {
   CONTENT_ROW_DIAGNOSTICS_GLOBAL_KEY,
   createContentRowDiagnostics,
   createEmptyDiagnosticsLive,
+  createLiveDiagnosticsState,
   createKindCountMap,
   createMountStateCountMap,
   createPinReasonCountMap,
@@ -11,7 +12,7 @@ import {
   summarizeValues,
 } from '../contentRowDiagnostics';
 import { CONTENT_ROW_DIAGNOSTICS_DETAIL_LIMIT } from '../contentRowTypes';
-import type { ContentRowDiagnosticsSnapshot } from '../contentRowTypes';
+import type { ContentRowDiagnosticsSnapshot, ContentRowRecord } from '../contentRowTypes';
 
 const live = () => createEmptyDiagnosticsLive();
 
@@ -213,11 +214,13 @@ describe('diagnostics collector', () => {
     expect(snapshot.warmUpDurationMs).toBe(350);
   });
 
-  it('carries bucket and reflow state outside the live payload', () => {
+  it('keeps the bucket and reflow state supplied by the provider, not a stale copy', () => {
     const collector = createContentRowDiagnostics();
-    collector.setLayoutBucket('w50-f32-markdown');
-    collector.setReflowState('reflow-materialized');
-    const snapshot = collector.snapshot({ ...live(), layoutBucket: 'ignored' });
+    const snapshot = collector.snapshot({
+      ...live(),
+      layoutBucket: 'w50-f32-markdown',
+      reflowState: 'reflow-materialized',
+    });
     expect(snapshot.layoutBucket).toBe('w50-f32-markdown');
     expect(snapshot.reflowState).toBe('reflow-materialized');
   });
@@ -247,8 +250,6 @@ describe('diagnostics collector', () => {
     });
     collector.startWarmUp(0);
     collector.completeWarmUp(10);
-    collector.setLayoutBucket('w1-f1-plain');
-    collector.setReflowState('reflow-materialized');
     collector.reset();
     expect(collector.snapshot(live())).toEqual(
       expect.objectContaining({
@@ -265,8 +266,6 @@ describe('diagnostics collector', () => {
         viewportBudgetBypass: 0,
         warmUpDurationMs: null,
         warmUpComplete: false,
-        layoutBucket: null,
-        reflowState: 'idle',
       }),
     );
     expect(collector.snapshot(live()).pinsByReason.focus).toBe(0);
@@ -292,7 +291,7 @@ describe('diagnostics collector', () => {
       'totalByKind',
       'mountedByKind',
       'mountStates',
-      'measuredHeights',
+      'measuredHeightDistribution',
       'pinsByReason',
       'settlementTimeoutDetails',
       'mountCountsPerFrame',
@@ -356,5 +355,126 @@ describe('installContentRowDiagnostics', () => {
     // the superseded handle must not clear the live one
     uninstallFirst();
     expect(window.__lcContentRows?.snapshot().registeredRows).toBe(2);
+  });
+});
+
+describe('createLiveDiagnosticsState', () => {
+  const record = (overrides: Partial<ContentRowRecord> = {}): ContentRowRecord =>
+    ({
+      token: Symbol('row'),
+      scopeToken: Symbol('scope'),
+      messageId: 'm1',
+      debugKey: 'm1:markdown:0',
+      kind: 'markdown',
+      fingerprint: 'markdown|0',
+      measuredFingerprint: 'markdown|0',
+      policy: 'windowed',
+      shellElement: null,
+      measuredElement: null,
+      mounted: true,
+      committedMounted: true,
+      generation: 1,
+      layoutBucket: 'w50-f32-markdown',
+      measuredHeight: undefined,
+      mountState: 'MOUNTED_UNMEASURED',
+      settled: false,
+      forceMounted: false,
+      oversized: false,
+      pinnedByPolicy: null,
+      pins: new Set(),
+      setMounted: () => {},
+      commitWaiters: new Set(),
+      ...overrides,
+    }) as ContentRowRecord;
+
+  const state = { layoutBucket: 'w50-f32-markdown', reflowState: 'idle' as const };
+
+  it('reports an empty registry without inventing rows', () => {
+    const live = createLiveDiagnosticsState([], state);
+    expect(live).toEqual(
+      expect.objectContaining({
+        registeredRows: 0,
+        mountedRows: 0,
+        placeholderRows: 0,
+        unmeasuredRows: 0,
+        unsettledRows: 0,
+        staleRows: 0,
+      }),
+    );
+    expect(live.measuredHeightDistribution.count).toBe(0);
+  });
+
+  it('splits mounted from placeholder rows and counts them per kind', () => {
+    const live = createLiveDiagnosticsState(
+      [
+        record({ kind: 'markdown' }),
+        record({ kind: 'markdown', mounted: false, mountState: 'PLACEHOLDER_MEASURED' }),
+        record({ kind: 'image' }),
+      ],
+      state,
+    );
+    expect(live.registeredRows).toBe(3);
+    expect(live.mountedRows).toBe(2);
+    expect(live.placeholderRows).toBe(1);
+    expect(live.totalByKind.markdown).toBe(2);
+    expect(live.totalByKind.image).toBe(1);
+    expect(live.mountedByKind.markdown).toBe(1);
+    expect(live.mountedByKind.image).toBe(1);
+    expect(live.mountStates.PLACEHOLDER_MEASURED).toBe(1);
+    expect(live.mountStates.MOUNTED_UNMEASURED).toBe(2);
+  });
+
+  it('counts unmeasured, unsettled, forced, oversized, and always-mounted rows', () => {
+    const live = createLiveDiagnosticsState(
+      [
+        record({ measuredHeight: 100, settled: true, mountState: 'MOUNTED_MEASURED_SETTLED' }),
+        record({ measuredHeight: 200, settled: false, mountState: 'MOUNTED_MEASURED_UNSETTLED' }),
+        record({ measuredHeight: undefined }),
+        record({ forceMounted: true, measuredHeight: 50, settled: true }),
+        record({ oversized: true, measuredHeight: 5000, settled: true }),
+        record({ policy: 'always-mounted', measuredHeight: 75, settled: true }),
+        record({ pinnedByPolicy: 'debug', measuredHeight: 75, settled: true }),
+      ],
+      state,
+    );
+    expect(live.unmeasuredRows).toBe(1);
+    expect(live.unsettledRows).toBe(2);
+    expect(live.forcedRows).toBe(1);
+    expect(live.oversizedRows).toBe(1);
+    // policy always-mounted + pinnedByPolicy
+    expect(live.alwaysMountedRows).toBe(2);
+  });
+
+  it('flags a row whose measurement no longer matches the current fingerprint as stale', () => {
+    const live = createLiveDiagnosticsState(
+      [record({ measuredFingerprint: 'markdown|0|expanded' }), record()],
+      state,
+    );
+    expect(live.staleRows).toBe(1);
+  });
+
+  it('summarizes the measured heights instead of exposing the raw list', () => {
+    const live = createLiveDiagnosticsState(
+      [record({ measuredHeight: 100 }), record({ measuredHeight: 300 }), record()],
+      state,
+    );
+    expect(live.measuredHeightDistribution).toEqual({
+      count: 2,
+      total: 400,
+      min: 100,
+      max: 300,
+      mean: 200,
+      p50: 100,
+      p95: 300,
+    });
+  });
+
+  it('carries the bucket and reflow state through, including the reflow-materialized mode', () => {
+    const live = createLiveDiagnosticsState([], {
+      layoutBucket: 'w40-f32-plain',
+      reflowState: 'reflow-materialized',
+    });
+    expect(live.layoutBucket).toBe('w40-f32-plain');
+    expect(live.reflowState).toBe('reflow-materialized');
   });
 });
