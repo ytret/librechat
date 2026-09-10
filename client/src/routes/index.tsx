@@ -41,6 +41,16 @@ const loadSkillsView = () =>
     Component: m.default,
   }));
 
+/**
+ * Development-only acceptance harness for content-row windowing (Stage 2). Lazily loaded, so
+ * production never requests the chunk, and registered outside the auth layout so it needs no
+ * session.
+ */
+const loadContentRowFixture = () =>
+  import('~/components/Chat/Messages/Windowing/dev/ContentRowFixture').then((m) => ({
+    Component: m.default,
+  }));
+
 const loadProjectsView = () =>
   import('~/components/Projects').then((m) => ({
     Component: m.ProjectsView,
@@ -99,6 +109,15 @@ export const router = createBrowserRouter(
       element: <VerifyEmail />,
       errorElement: <RouteErrorBoundary />,
     },
+    ...(import.meta.env.DEV
+      ? [
+          {
+            path: 'dev/content-rows',
+            lazy: loadContentRowFixture,
+            errorElement: <RouteErrorBoundary />,
+          },
+        ]
+      : []),
     {
       element: <AuthLayout />,
       errorElement: <RouteErrorBoundary />,

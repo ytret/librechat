@@ -448,9 +448,14 @@ describe('createLiveDiagnosticsState', () => {
     expect(live.alwaysMountedRows).toBe(2);
   });
 
-  it('flags a row whose measurement no longer matches the current fingerprint as stale', () => {
+  it('flags a row that still holds a height under a mismatched fingerprint as stale', () => {
     const live = createLiveDiagnosticsState(
-      [record({ measuredFingerprint: 'markdown|0|expanded' }), record()],
+      [
+        record({ measuredFingerprint: 'markdown|0|expanded', measuredHeight: 180 }),
+        // a mismatched capture with no height held is unmeasured, not stale
+        record({ measuredFingerprint: 'markdown|0|expanded' }),
+        record({ measuredHeight: 180 }),
+      ],
       state,
     );
     expect(live.staleRows).toBe(1);

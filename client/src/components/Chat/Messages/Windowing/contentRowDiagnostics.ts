@@ -153,8 +153,8 @@ export function createEmptyDiagnosticsLive(): ContentRowDiagnosticsLive {
  * - `unmeasuredRows` — no accepted height for the current generation.
  * - `unsettledRows` — mounted but not yet settled (and therefore not
  *   unmount-eligible).
- * - `staleRows` — the measurement in hand was taken under a fingerprint that no
- *   longer describes the source. Non-zero outside a transition means the
+ * - `staleRows` — a height is still held under a fingerprint that no longer describes the
+ *   source, so it must not be used. This should always be zero; non-zero means the
  *   invalidation path leaked.
  */
 export function createLiveDiagnosticsState(
@@ -187,7 +187,10 @@ export function createLiveDiagnosticsState(
     if (record.mounted && !record.settled) {
       live.unsettledRows += 1;
     }
-    if (record.measuredFingerprint !== record.fingerprint) {
+    // A row is stale only when it still holds a height that must not be used, i.e. a
+    // measurement taken for a fingerprint that no longer describes the source. A row whose
+    // height was simply invalidated is unmeasured, not stale.
+    if (record.measuredHeight != null && record.measuredFingerprint !== record.fingerprint) {
       live.staleRows += 1;
     }
     if (record.forceMounted) {

@@ -23,6 +23,32 @@
   overflow-anchor: none;
 }
 
+/*
+ * Content-row windowing shells (spec 09 §18).
+ *
+ * `display: flow-root` establishes a block formatting context so the shell's height is
+ * exactly the height of its content, with no margin collapse through it. `min-width: 0`
+ * keeps the shell from being widened by long unbreakable content. `content-visibility`,
+ * `display: contents`, and layout/paint containment are deliberately NOT used (see §18).
+ *
+ * A placeholder keeps its own exact height in an inline style; `overflow: hidden` stops any
+ * leftover content from spilling and `overflow-anchor: none` keeps the browser's native
+ * anchoring out of the way while the provider owns correction.
+ */
+.content-virtual-row {
+  display: flow-root;
+  min-width: 0;
+}
+
+.content-virtual-row[data-content-mounted='false'] {
+  overflow: hidden;
+  overflow-anchor: none;
+}
+
+.content-virtual-row__measured {
+  min-width: 0;
+}
+
 /* Custom Variables */
 :root {
   --white: #fff;

@@ -373,6 +373,16 @@ export default [
     },
   },
   {
+    // **Development-only harnesses — no localization, no production concerns.**
+    // `client/src/components/Chat/Messages/Windowing/dev/**` is a flag-gated fixture that is
+    // lazily loaded only when `import.meta.env.DEV` is true, so its literal UI strings never
+    // reach a localized production surface.
+    files: ['client/src/components/Chat/Messages/Windowing/dev/**/*.tsx'],
+    rules: {
+      'i18next/no-literal-string': 'off',
+    },
+  },
+  {
     // **Data-schemas — ban raw bulkWrite/collection.* in production code**
     // Tests and the tenantSafeBulkWrite wrapper itself are excluded.
     files: ['./packages/data-schemas/**/*.ts'],

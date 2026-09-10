@@ -414,7 +414,9 @@ describe('ContentRowWindowingProvider conversation change', () => {
     expect(snapshot.mountedRows).toBe(1);
     expect(snapshot.registeredRows).toBe(1);
     expect(snapshot.unmeasuredRows).toBe(1);
-    expect(snapshot.staleRows).toBe(1);
+    // the height was dropped rather than kept under a mismatched fingerprint
+    expect(snapshot.staleRows).toBe(0);
+    expect(snapshot.measuredHeightDistribution.count).toBe(0);
   });
 
   it('does not unmount rows on a conversation change', () => {

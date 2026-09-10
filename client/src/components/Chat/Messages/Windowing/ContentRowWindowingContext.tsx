@@ -32,7 +32,9 @@ import {
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
 import type {
   ContentRowDiagnosticsSnapshot,
+  ContentRowMaterializeReason,
   ContentRowMeasurementSource,
+  ContentRowPinReason,
   ContentRowRecord,
   ContentRowReflowState,
   ContentRowRegistration,
@@ -44,8 +46,10 @@ import type {
   MountedContentRegistration,
 } from './contentRowTypes';
 import {
+  MATERIALIZE_SETTLE_TIMEOUT_MS,
   MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX,
   MIN_ANCHOR_CORRECTION_PX,
+  NAVIGATION_MEASUREMENT_TIMEOUT_MS,
   CONTENT_ROW_OVERSCAN_PX,
   CONTENT_ROW_QUIET_FRAMES,
   CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
@@ -193,6 +197,8 @@ export function ContentRowWindowingProvider({
   /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
   const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
   const transitionBatchId = useRef(0);
+  /** Non-'none' while a materialization operation owns the DOM (§10 step 7). */
+  const materializationMode = useRef<'none' | ContentRowMaterializeReason>('none');
   const pinnedToBottomFallbackRef = useRef(false);
   const pinnedToBottom = pinnedToBottomRef ?? pinnedToBottomFallbackRef;
 
@@ -651,6 +657,10 @@ export function ContentRowWindowingProvider({
       // §10 step 7 — discard queued decisions when the conversation, layout bucket, or
       // travel direction changed after this pass was scheduled, then schedule a fresh
       // pass so the change is not lost.
+      if (materializationMode.current !== 'none') {
+        // §10 step 7 — a materialization owns mount state; a geometry pass would fight it.
+        return;
+      }
       const bucket = currentBucket();
       if (
         pass.conversationEpoch !== conversationEpoch.current ||
@@ -787,9 +797,11 @@ export function ContentRowWindowingProvider({
    */
   const invalidateMeasurement = useCallback(
     (record: ContentRowRecord) => {
-      record.measuredElement = null;
+      // The height is dropped, but the element and the fingerprint capture are kept: the
+      // source is still the same one, only its geometry is suspect. Keeping the capture is
+      // what lets the mounted element be re-measured immediately instead of waiting for a
+      // React update that may never come.
       record.measuredHeight = undefined;
-      record.measuredFingerprint = undefined;
       record.settled = false;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
@@ -987,6 +999,24 @@ export function ContentRowWindowingProvider({
     [releaseMeasurementWaiters, scheduleAsyncCorrection],
   );
 
+  /** Re-measure a mounted row from its current element, after an invalidation. */
+  const remeasureRow = useCallback(
+    (record: ContentRowRecord) => {
+      if (!record.mounted || !record.measuredElement) {
+        return;
+      }
+      reportMountedContentHeight(
+        record.token,
+        record.generation,
+        record.layoutBucket,
+        record.measuredElement,
+        readElementBorderBoxHeight(record.measuredElement),
+        'layout-effect',
+      );
+    },
+    [reportMountedContentHeight],
+  );
+
   /**
    * Bind a row's generation-specific measured element (the inner element, never the
    * persistent shell) to the shared resize observer. The observer is the only resize
@@ -1040,26 +1070,213 @@ export function ContentRowWindowingProvider({
   );
 
   /**
-   * Resolve the message shell that owns a message's rows, mounting them on the way.
-   *
-   * Task 2.8 adds the current-generation measurement wait required by §20.7.2 and
-   * the navigation timeout; here it mounts the rows and returns the shell.
+   * Hold a row mounted for a reason (§7.2). A pinned row is mounted immediately and cannot
+   * become a placeholder while the pin is held; releasing it schedules a normal pass.
    */
-  const ensureMessageContentMounted = useCallback(async (messageId: string) => {
-    const records = byMessageId.current.get(messageId);
-    if (!records || records.size === 0) {
-      return null;
-    }
-    let shell: HTMLElement | null = null;
-    for (const record of records) {
-      if (!record.mounted) {
-        record.mounted = true;
-        record.setMounted(true, record.generation);
+  const pinRow = useCallback(
+    (token: ContentRowToken, reason: ContentRowPinReason) => {
+      const record = rows.current.get(token);
+      if (!record) {
+        return () => {};
       }
-      shell = shell ?? messageShellOf(record);
-    }
-    return shell;
-  }, []);
+      record.pins.add(reason);
+      diagnostics.current.recordPin(reason);
+      mountRow(record);
+      let released = false;
+      return () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        record.pins.delete(reason);
+        diagnostics.current.recordUnpin(reason);
+        scheduleGeometryPass.current();
+      };
+    },
+    [mountRow],
+  );
+
+  /**
+   * Mount everything for a screenshot, find, selection, or debug capture (§17.1, §20.7.5–.6).
+   *
+   * Readiness barriers are honoured: the caller's capture runs only after fonts are ready,
+   * every registered asynchronous renderer has reported ready, and two quiet frames have
+   * passed — bounded by a real timeout so a suspended animation frame can never hang the
+   * capture. On both success and timeout the returned cleanup restores normal windowing and
+   * the previous scroll position.
+   */
+  const materializeAll = useCallback(
+    (reason: ContentRowMaterializeReason) => {
+      const root = scrollRootRef.current;
+      const previousScrollTop = root?.scrollTop;
+      materializationMode.current = reason;
+      flushSync(() => {
+        rows.current.forEach((record) => {
+          mountRow(record);
+        });
+      });
+
+      const cleanup = () => {
+        materializationMode.current = 'none';
+        if (root && previousScrollTop != null) {
+          root.scrollTop = previousScrollTop;
+        }
+        scheduleGeometryPass.current();
+      };
+
+      const ready = () => {
+        if (root && previousScrollTop != null) {
+          root.scrollTop = previousScrollTop;
+        }
+      };
+
+      return new Promise<() => void>((resolve) => {
+        let settled = false;
+        const finish = (timedOut: boolean) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timedOut) {
+            diagnostics.current.recordMaterializeTimeout(reason);
+          }
+          resolve(cleanup);
+        };
+        const timer = setTimeout(() => finish(true), MATERIALIZE_SETTLE_TIMEOUT_MS);
+
+        const barriers: Array<Promise<unknown>> = [];
+        rows.current.forEach((record) => {
+          if (record.readinessPending > 0) {
+            barriers.push(
+              new Promise<void>((done) => {
+                const check = () => {
+                  if (record.readinessPending === 0) {
+                    done();
+                    return;
+                  }
+                  requestAnimationFrame(check);
+                };
+                check();
+              }),
+            );
+          }
+        });
+
+        const fonts = (typeof document === 'undefined' ? undefined : document.fonts) as
+          | FontFaceSet
+          | undefined;
+        if (fonts?.ready && typeof fonts.ready.then === 'function') {
+          barriers.push(fonts.ready);
+        }
+
+        Promise.all(barriers)
+          .catch(() => undefined)
+          .then(() => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                clearTimeout(timer);
+                ready();
+                finish(false);
+              });
+            });
+          });
+      });
+    },
+    [mountRow, scrollRootRef],
+  );
+
+  /**
+   * Synchronous materialization for native find and Ctrl/Meta+A (§20.7.8): text must be in
+   * the DOM before the default browser action runs, so this commits at the event boundary and
+   * deliberately skips fonts and layout settling.
+   */
+  const materializeAllSync = useCallback(
+    (reason: 'find' | 'selection') => {
+      materializationMode.current = reason;
+      flushSync(() => {
+        rows.current.forEach((record) => {
+          mountRow(record);
+        });
+      });
+    },
+    [mountRow],
+  );
+
+  /**
+   * Invalidate the measurements of the affected rows and re-evaluate (§7.2). Used when content
+   * changes shape without changing identity, e.g. after an edit or a content layout change.
+   */
+  const notifyLayoutChange = useCallback(
+    (scope: { token?: ContentRowToken; messageId?: string }) => {
+      const affected = scope.token != null ? [rows.current.get(scope.token)] : [];
+      if (scope.messageId != null) {
+        affected.push(...(byMessageId.current.get(scope.messageId) ?? []));
+      }
+      affected.forEach((record) => {
+        if (!record) {
+          return;
+        }
+        invalidateMeasurement(record);
+        remeasureRow(record);
+      });
+      scheduleGeometryPass.current();
+    },
+    [invalidateMeasurement, remeasureRow],
+  );
+
+  /**
+   * Resolve the message shell that owns a message's rows, mounting them and waiting for a
+   * current-generation real measurement (§20.7.2, §20.7.4).
+   *
+   * A placeholder measurement cannot satisfy this: the wait is released only by an accepted
+   * measurement for the generation that is mounted now, and is bounded by a timeout so a jump
+   * can never hang.
+   */
+  const ensureMessageContentMounted = useCallback(
+    async (messageId: string) => {
+      const records = byMessageId.current.get(messageId);
+      if (!records || records.size === 0) {
+        return null;
+      }
+      const list = [...records];
+      let shell: HTMLElement | null = null;
+      list.forEach((record) => {
+        mountRow(record);
+        shell = shell ?? messageShellOf(record);
+      });
+      await Promise.all(
+        list.map(
+          (record) =>
+            new Promise<void>((resolve) => {
+              if (
+                record.measuredHeight != null &&
+                record.measuredFingerprint === record.fingerprint &&
+                record.mounted
+              ) {
+                resolve();
+                return;
+              }
+              let done = false;
+              const finish = () => {
+                if (done) {
+                  return;
+                }
+                done = true;
+                clearTimeout(timer);
+                resolve();
+              };
+              const timer = setTimeout(() => {
+                record.measurementWaiters.delete(finish);
+                finish();
+              }, NAVIGATION_MEASUREMENT_TIMEOUT_MS);
+              record.measurementWaiters.add(finish);
+            }),
+        ),
+      );
+      return shell;
+    },
+    [mountRow],
+  );
 
   const getDiagnostics = useCallback((): ContentRowDiagnosticsSnapshot => {
     return diagnostics.current.snapshot(
@@ -1078,11 +1295,19 @@ export function ContentRowWindowingProvider({
       reportMountedContentHeight,
       markRowSettled,
       registerReadiness,
+      pinRow,
+      materializeAll,
+      materializeAllSync,
+      notifyLayoutChange,
       getLayoutBucket,
       ensureMessageContentMounted,
       getDiagnostics,
     }),
     [
+      pinRow,
+      materializeAll,
+      materializeAllSync,
+      notifyLayoutChange,
       registerRow,
       updateRow,
       registerMountedContent,
