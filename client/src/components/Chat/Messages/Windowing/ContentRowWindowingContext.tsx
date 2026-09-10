@@ -803,6 +803,10 @@ export function ContentRowWindowingProvider({
       const rects = new Map<ContentRowToken, { top: number; bottom: number }>();
       /** Mounted rows intersecting the viewport right now: zero means the reader sees nothing. */
       let mountedRowsInViewport = 0;
+      /** Whether this pass is handling a jump larger than the lead. */
+      const largeJumpPass = Math.abs(lastScrollDelta.current) > lead;
+      /** Mount work actually applied by this pass. */
+      let appliedMounts = 0;
 
       // Batch-read every candidate rectangle before any write.
       rows.current.forEach((record) => {
@@ -895,8 +899,14 @@ export function ContentRowWindowingProvider({
       // visible rows has fixed the blankness before the browser paints, so the reader never sees
       // it. Counting the pre-transaction state recorded those repairs as failures. What actually
       // reaches the screen is: the viewport was empty AND this pass did not fill it.
+      appliedMounts = mounts;
       if (passedWithEmptyViewport && mounts === 0) {
         diagnostics.current.recordBlankViewportPass(lastScrollDelta.current);
+      }
+      if (largeJumpPass && passedWithEmptyViewport && appliedMounts === 0) {
+        // A jump larger than the lead that ended up mounting nothing: this is the case that
+        // reaches the screen as empty background, and the counters cannot otherwise explain why.
+        diagnostics.current.recordBlankLargeJumpPass(unmountCandidates.length, lead, hysteresis);
       }
     },
     [applyTransitionBatch, currentBucket, effectiveLeadPx, scrollRootRef],

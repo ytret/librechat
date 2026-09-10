@@ -74,6 +74,7 @@ export type ContentRowDiagnosticsCollector = {
   recordBlankViewportPass(scrollDeltaPx: number): void;
   recordScrollDelta(deltaPx: number): void;
   recordSynchronousPass(): void;
+  recordBlankLargeJumpPass(unmountCandidates: number, lead: number, hysteresis: number): void;
   recordSettlementAttempt(source: ContentRowAttemptSource): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
@@ -361,6 +362,10 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let maxScrollDeltaOnBlankPassPx = 0;
   let attemptsBySource = createAttemptSourceCountMap();
   let synchronousPasses = 0;
+  let blankLargeJumpPasses = 0;
+  let blankLargeJumpUnmountCandidates = 0;
+  let blankLargeJumpLead = 0;
+  let blankLargeJumpHysteresis = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -453,6 +458,12 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordSettlementAttempt(source) {
       attemptsBySource[source] += 1;
     },
+    recordBlankLargeJumpPass(unmountCandidates, lead, hysteresis) {
+      blankLargeJumpPasses += 1;
+      blankLargeJumpUnmountCandidates = unmountCandidates;
+      blankLargeJumpLead = lead;
+      blankLargeJumpHysteresis = hysteresis;
+    },
     recordSynchronousPass() {
       synchronousPasses += 1;
     },
@@ -513,6 +524,10 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         blankViewportPasses,
         attemptsBySource: { ...attemptsBySource },
         synchronousPasses,
+        blankLargeJumpPasses,
+        blankLargeJumpUnmountCandidates,
+        blankLargeJumpLead,
+        blankLargeJumpHysteresis,
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -546,6 +561,10 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       blankViewportPasses = 0;
       attemptsBySource = createAttemptSourceCountMap();
       synchronousPasses = 0;
+      blankLargeJumpPasses = 0;
+      blankLargeJumpUnmountCandidates = 0;
+      blankLargeJumpLead = 0;
+      blankLargeJumpHysteresis = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;

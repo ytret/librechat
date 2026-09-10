@@ -470,6 +470,17 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             snapshot.synchronousPasses +
             '   (jumps larger than the lead, handled at the event boundary)',
         );
+        console.log(
+          'blank large-jump passes   = ' +
+            snapshot.blankLargeJumpPasses +
+            '   (large jump that mounted nothing; unmountCandidates=' +
+            snapshot.blankLargeJumpUnmountCandidates +
+            ' lead=' +
+            Math.round(snapshot.blankLargeJumpLead) +
+            ' hysteresis=' +
+            Math.round(snapshot.blankLargeJumpHysteresis) +
+            ')',
+        );
         const attempts = snapshot.settlementTimeoutDetails.map((d) => d.attempts);
         console.log(
           'demotion attempts         = ' +

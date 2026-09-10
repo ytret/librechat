@@ -504,6 +504,14 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   attemptsBySource: Record<ContentRowAttemptSource, number>;
   /** Geometry passes run synchronously at an event boundary, for a jump larger than the lead. */
   synchronousPasses: number;
+  /** Large-jump passes that ended up mounting nothing: each is a blank frame the reader saw. */
+  blankLargeJumpPasses: number;
+  /** Unmount candidates considered by the most recent blank large-jump pass. */
+  blankLargeJumpUnmountCandidates: number;
+  /** Lead used by that pass. */
+  blankLargeJumpLead: number;
+  /** Unmount hysteresis in force during that pass. */
+  blankLargeJumpHysteresis: number;
   /**
    * Geometry passes that ran with no mounted row intersecting the viewport while rows were
    * registered: each one is a moment the reader saw empty background. Must stay zero during
