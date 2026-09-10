@@ -73,6 +73,7 @@ export type ContentRowDiagnosticsCollector = {
   recordLead(leadPx: number): void;
   recordBlankViewportPass(scrollDeltaPx: number): void;
   recordScrollDelta(deltaPx: number): void;
+  recordSynchronousPass(): void;
   recordSettlementAttempt(source: ContentRowAttemptSource): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
@@ -359,6 +360,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let maxScrollDeltaPx = 0;
   let maxScrollDeltaOnBlankPassPx = 0;
   let attemptsBySource = createAttemptSourceCountMap();
+  let synchronousPasses = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -451,6 +453,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordSettlementAttempt(source) {
       attemptsBySource[source] += 1;
     },
+    recordSynchronousPass() {
+      synchronousPasses += 1;
+    },
     recordScrollDelta(deltaPx) {
       if (Math.abs(deltaPx) > maxScrollDeltaPx) {
         maxScrollDeltaPx = Math.abs(deltaPx);
@@ -507,6 +512,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         maxScrollDeltaOnBlankPassPx,
         blankViewportPasses,
         attemptsBySource: { ...attemptsBySource },
+        synchronousPasses,
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -539,6 +545,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       maxScrollDeltaOnBlankPassPx = 0;
       blankViewportPasses = 0;
       attemptsBySource = createAttemptSourceCountMap();
+      synchronousPasses = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;

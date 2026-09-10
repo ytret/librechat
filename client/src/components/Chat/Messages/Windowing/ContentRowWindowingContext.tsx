@@ -207,6 +207,9 @@ export function ContentRowWindowingProvider({
   /** Signed scroll delta of the most recent scroll event, for blank-pass attribution. */
   const lastScrollDelta = useRef(0);
   const scheduleGeometryPass = useRef<(reason?: ContentRowPassScheduleReason) => void>(() => {});
+  const runGeometryPassSynchronously = useRef<(reason?: ContentRowPassScheduleReason) => void>(
+    () => {},
+  );
   /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
   const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
   const transitionBatchId = useRef(0);
@@ -899,6 +902,13 @@ export function ContentRowWindowingProvider({
     [applyTransitionBatch, currentBucket, effectiveLeadPx, scrollRootRef],
   );
 
+  const nextPassToken = () => ({
+    id: (geometryPassId.current += 1),
+    conversationEpoch: conversationEpoch.current,
+    directionEpoch: directionEpoch.current,
+    layoutBucket: currentBucket(),
+  });
+
   scheduleGeometryPass.current = (reason: ContentRowPassScheduleReason = 'discard') => {
     // The reason is recorded even when a pass is already queued for this frame, so the
     // attribution below accounts for every trigger and a repeated trigger is visible.
@@ -907,16 +917,29 @@ export function ContentRowWindowingProvider({
     if (loop.frame != null) {
       return;
     }
-    const pass = {
-      id: (geometryPassId.current += 1),
-      conversationEpoch: conversationEpoch.current,
-      directionEpoch: directionEpoch.current,
-      layoutBucket: currentBucket(),
-    };
+    const pass = nextPassToken();
     loop.frame = requestAnimationFrame(() => {
       loop.frame = undefined;
       runGeometryPass(pass);
     });
+  };
+
+  /**
+   * Run a geometry pass at the event boundary instead of on the next frame (§11.2, §20.7.8).
+   *
+   * Used only for a discrete jump larger than the mount lead — Home/End, a scrollbar drag, a
+   * programmatic scroll. In that case the browser has already changed and painted the scroll
+   * position by the time the scroll event fires, so a deferred pass is one frame too late and the
+   * reader sees the empty viewport in between. Mounting synchronously inside the event handler
+   * lets the DOM mutation land in the same paint as the new scroll position. No lead distance can
+   * substitute for this, because the jump is not gradual.
+   */
+  runGeometryPassSynchronously.current = (reason: ContentRowPassScheduleReason = 'scroll') => {
+    // Any frame already queued would run against a superseded token; leave it, the epoch and
+    // applied-pass bookkeeping make it a no-op.
+    diagnostics.current.recordPassScheduled(reason);
+    diagnostics.current.recordSynchronousPass();
+    runGeometryPass(nextPassToken());
   };
 
   /**
@@ -1627,6 +1650,13 @@ export function ContentRowWindowingProvider({
       }
       lastScrollTop.current = top;
       lastScrollAt.current = now;
+      // A jump larger than the mount lead cannot be covered by pre-mounting: the reader has
+      // already arrived. Handle it at the event boundary so the rows are in the DOM for the same
+      // paint, rather than a frame later.
+      if (Math.abs(lastScrollDelta.current) > effectiveLeadPx()) {
+        runGeometryPassSynchronously.current('scroll');
+        return;
+      }
       scheduleGeometryPass.current('scroll');
     };
     // §11.4 — while this provider owns correction, native anchoring must not also run.
@@ -1647,7 +1677,7 @@ export function ContentRowWindowingProvider({
       }
       asyncCorrectionState.pending = 0;
     };
-  }, [conversationId, scrollRootRef]);
+  }, [conversationId, effectiveLeadPx, scrollRootRef]);
 
   // Development-only console handle (§23). Production installs nothing.
   useEffect(() => {

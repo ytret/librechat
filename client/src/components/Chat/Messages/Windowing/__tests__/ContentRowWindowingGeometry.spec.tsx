@@ -493,6 +493,33 @@ describe('unmount eligibility in the geometry pass', () => {
     expect(snapshot.maxLeadPx).toBeGreaterThan(CONTENT_ROW_OVERSCAN_PX);
   });
 
+  it('mounts synchronously at the event boundary for a jump larger than the lead', () => {
+    // Regression for the perceived blank on Home/End and scrollbar drag: those are discrete
+    // jumps the browser paints immediately, so a pass on the next frame is one frame too late.
+    render(<Harness>{manyRows(20)}</Harness>);
+    settleAll();
+    for (let index = 0; index < 20; index++) {
+      setRowRect(`m${index}`, { top: -20000 - index * 100, bottom: -19900 - index * 100 });
+    }
+    scrollBy(5);
+    flushFrames(3);
+    expect(placeholderRows()).toBe(20);
+
+    // the reader teleports a long way. NOTE: no flushFrames() after this dispatch — the rows must
+    // already be mounted by the time the scroll event handler returns.
+    for (let index = 0; index < 20; index++) {
+      setRowRect(`m${index}`, { top: index * 120, bottom: index * 120 + 100 });
+    }
+    scrollTopValue += 12000;
+    const root = document.querySelector('.scroll-root');
+    act(() => {
+      root?.dispatchEvent(new Event('scroll'));
+    });
+    expect(api.getDiagnostics().synchronousPasses).toBeGreaterThan(0);
+    expect(mountedRows()).toBeGreaterThan(0);
+    expect(placeholderRows()).toBeLessThan(20);
+  });
+
   it('counts a blank-viewport pass when no mounted row is visible', () => {
     render(<Harness>{manyRows(3)}</Harness>);
     settleAll();

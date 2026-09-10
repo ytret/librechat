@@ -502,6 +502,8 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   maxScrollDeltaOnBlankPassPx: number;
   /** Settlement attempts armed, by call path. Names which path spends the attempt budget. */
   attemptsBySource: Record<ContentRowAttemptSource, number>;
+  /** Geometry passes run synchronously at an event boundary, for a jump larger than the lead. */
+  synchronousPasses: number;
   /**
    * Geometry passes that ran with no mounted row intersecting the viewport while rows were
    * registered: each one is a moment the reader saw empty background. Must stay zero during

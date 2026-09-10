@@ -465,6 +465,11 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             'px   (largest jump that showed empty background)',
         );
         console.log('attempts by source        = ' + JSON.stringify(snapshot.attemptsBySource));
+        console.log(
+          'synchronous passes        = ' +
+            snapshot.synchronousPasses +
+            '   (jumps larger than the lead, handled at the event boundary)',
+        );
         const attempts = snapshot.settlementTimeoutDetails.map((d) => d.attempts);
         console.log(
           'demotion attempts         = ' +
