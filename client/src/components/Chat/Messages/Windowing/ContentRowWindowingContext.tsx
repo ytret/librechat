@@ -28,8 +28,7 @@ import {
   createLiveDiagnosticsState,
   installContentRowDiagnostics,
 } from './contentRowDiagnostics';
-import { computeLayoutBucket, nextGeneration } from './contentRowIdentity';
-import { classifyMeasurement } from './contentRowIdentity';
+import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
 import type {
   ContentRowDiagnosticsSnapshot,
   ContentRowMeasurementSource,
@@ -43,6 +42,7 @@ import type {
   MessageScopeToken,
   MountedContentRegistration,
 } from './contentRowTypes';
+import { CONTENT_ROW_QUIET_FRAMES, CONTENT_ROW_SETTLEMENT_TIMEOUT_MS } from './contentRowTypes';
 
 /** Observer mapping for a mounted content element (§7.4). */
 export type MountedElementMapping = {
@@ -56,6 +56,13 @@ export type MountedElementMapping = {
  * Computed from the same function as real buckets so it can never collide with a
  * real bucket by accident.
  */
+/** Clock used for settlement deadlines; injectable through `performance` in tests. */
+function performanceNow(): number {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
 export const UNKNOWN_LAYOUT_BUCKET: LayoutBucket = computeLayoutBucket({
   containerWidth: 0,
   fontSizePx: 16,
@@ -104,6 +111,29 @@ export function readElementBorderBoxHeight(element: HTMLElement): number {
   return element.getBoundingClientRect().height;
 }
 
+/**
+ * Whether a row is currently allowed to become a placeholder (§10 step 3, §20.2.9).
+ *
+ * Only a settled row in the `MOUNTED_MEASURED_SETTLED` state may unmount, which by
+ * construction excludes unmeasured and unsettled rows. Everything else that disqualifies
+ * a row is listed here so the rule is auditable in one place.
+ */
+export function canRowUnmount(record: ContentRowRecord): boolean {
+  return (
+    record.mounted &&
+    record.settled &&
+    record.mountState === 'MOUNTED_MEASURED_SETTLED' &&
+    record.policy === 'windowed' &&
+    record.pinnedByPolicy == null &&
+    !record.forceMounted &&
+    !record.oversized &&
+    record.pins.size === 0 &&
+    record.readinessPending === 0 &&
+    record.measuredHeight != null &&
+    record.measuredFingerprint === record.fingerprint
+  );
+}
+
 export function ContentRowWindowingProvider({
   children,
   scrollRootRef,
@@ -131,6 +161,19 @@ export function ContentRowWindowingProvider({
   const reflowState = useRef<ContentRowReflowState>('idle');
   const conversationRef = useRef<string | null>(conversationId ?? null);
   const resizeObserver = useRef<ResizeObserver | undefined>(undefined);
+  const fontsReady = useRef(false);
+  const warmUpComplete = useRef(false);
+  /** token -> quiet frames still required before the row may settle (§8.1 step 4). */
+  const pendingSettlements = useRef(new Map<ContentRowToken, number>());
+  /** token -> absolute deadline for the per-row settlement timeout (§8.1). */
+  const settlementDeadlines = useRef(new Map<ContentRowToken, number>());
+  /**
+   * Holder for the settlement loop's animation frame id. A wrapper object rather than a
+   * number ref so the effect cleanup can capture it without reading `.current` after the
+   * component may have unmounted.
+   */
+  const settlementLoop = useRef<{ frame?: number }>({});
+  const scheduleSettlementLoop = useRef<() => void>(() => {});
 
   const currentBucket = useCallback((): LayoutBucket => {
     const bucket = readLayoutBucket(scrollRootRef.current);
@@ -162,35 +205,229 @@ export function ContentRowWindowingProvider({
   }, []);
 
   /**
+   * Note that a row has geometry to measure. Arms the per-row settlement timeout (§8.1)
+   * and starts the quiet-frame loop. A row that keeps resizing keeps getting
+   * measurements, but the deadline is *not* refreshed by them: the timeout exists to
+   * stop unknown asynchronous geometry from ever becoming a placeholder.
+   */
+  const beginMeasurementWork = useCallback((record: ContentRowRecord) => {
+    settlementDeadlines.current.set(
+      record.token,
+      performanceNow() + CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
+    );
+    scheduleSettlementLoop.current();
+  }, []);
+
+  /**
+   * Complete warm-up once fonts are ready and no windowed row is still unsettled
+   * (§8.1). A row that timed out is not "settled", but it can never become eligible to
+   * unmount, so it must not hold warm-up open forever.
+   */
+  const maybeCompleteWarmUp = useCallback(() => {
+    if (warmUpComplete.current || !fontsReady.current) {
+      return;
+    }
+    let blocked = false;
+    rows.current.forEach((record) => {
+      if (record.policy !== 'windowed' || record.pinnedByPolicy != null) {
+        return;
+      }
+      if (!record.settled) {
+        blocked = true;
+      }
+    });
+    if (blocked) {
+      return;
+    }
+    warmUpComplete.current = true;
+    diagnostics.current.completeWarmUp();
+  }, []);
+
+  /**
+   * Mark a row settled for its current generation (§7.5). Only a mounted, measured,
+   * readiness-clear row may settle; a stale generation is ignored rather than
+   * corrupting a newer one.
+   */
+  const markRowSettled = useCallback(
+    (token: ContentRowToken, generation: number) => {
+      const record = rows.current.get(token);
+      if (!record) {
+        return;
+      }
+      if (record.generation !== generation || !record.mounted) {
+        return;
+      }
+      if (record.measuredHeight == null || record.readinessPending > 0) {
+        return;
+      }
+      record.settled = true;
+      record.mountState = 'MOUNTED_MEASURED_SETTLED';
+      pendingSettlements.current.delete(token);
+      settlementDeadlines.current.delete(token);
+      maybeCompleteWarmUp();
+    },
+    [maybeCompleteWarmUp],
+  );
+
+  /**
+   * One provider-level frame pass for settlement (§8.1). No per-row timer or observer
+   * exists; the provider owns the single loop.
+   */
+  const applySettlementPass = useCallback(() => {
+    const now = performanceNow();
+
+    // Settlement timeouts first. A row that exhausted its budget becomes effectively
+    // always-mounted: unknown asynchronous geometry must never become a placeholder.
+    Array.from(settlementDeadlines.current.entries()).forEach(([token, deadline]) => {
+      const record = rows.current.get(token);
+      if (!record) {
+        settlementDeadlines.current.delete(token);
+        return;
+      }
+      if (record.settled || now < deadline) {
+        return;
+      }
+      const elapsedMs = Math.round(now - (deadline - CONTENT_ROW_SETTLEMENT_TIMEOUT_MS));
+      record.policy = 'always-mounted';
+      record.pinnedByPolicy = 'settlement-timeout';
+      settlementDeadlines.current.delete(token);
+      pendingSettlements.current.delete(token);
+      diagnostics.current.recordSettleTimeout({
+        debugKey: record.debugKey,
+        kind: record.kind,
+        elapsedMs,
+      });
+      if (record.readinessPending > 0) {
+        diagnostics.current.recordReadinessTimeout({
+          debugKey: record.debugKey,
+          kind: record.kind,
+          elapsedMs,
+        });
+      }
+      maybeCompleteWarmUp();
+    });
+
+    if (fontsReady.current) {
+      Array.from(pendingSettlements.current.entries()).forEach(([token, remaining]) => {
+        const record = rows.current.get(token);
+        if (!record) {
+          pendingSettlements.current.delete(token);
+          return;
+        }
+        if (!record.mounted || record.measuredHeight == null) {
+          pendingSettlements.current.delete(token);
+          return;
+        }
+        if (record.readinessPending > 0) {
+          pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
+          return;
+        }
+        if (remaining > 1) {
+          pendingSettlements.current.set(token, remaining - 1);
+          return;
+        }
+        markRowSettled(token, record.generation);
+      });
+    }
+  }, [markRowSettled, maybeCompleteWarmUp]);
+
+  scheduleSettlementLoop.current = () => {
+    const loop = settlementLoop.current;
+    if (loop.frame != null) {
+      return;
+    }
+    loop.frame = requestAnimationFrame(() => {
+      loop.frame = undefined;
+      applySettlementPass();
+      if (pendingSettlements.current.size > 0 || settlementDeadlines.current.size > 0) {
+        scheduleSettlementLoop.current();
+      }
+    });
+  };
+
+  /** Release a row's measurement waiters so navigation can proceed (§20.7.2). */
+  const releaseMeasurementWaiters = useCallback((record: ContentRowRecord) => {
+    if (record.measurementWaiters.size === 0) {
+      return;
+    }
+    record.measurementWaiters.forEach((resolve) => resolve());
+    record.measurementWaiters.clear();
+  }, []);
+
+  /**
+   * Register an asynchronous renderer's readiness (§8.2). The row cannot settle, and
+   * therefore cannot unmount, until every registered promise has settled. Returns an
+   * unsubscribe function; unsubscribing releases the barrier rather than leaving the row
+   * unsettled forever.
+   */
+  const registerReadiness = useCallback(
+    (token: ContentRowToken, generation: number, readiness: Promise<unknown>) => {
+      const record = rows.current.get(token);
+      if (!record || record.generation !== generation) {
+        return () => {};
+      }
+      record.readinessPending += 1;
+      record.settled = false;
+      if (record.mountState === 'MOUNTED_MEASURED_SETTLED') {
+        record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
+      }
+      pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
+      scheduleSettlementLoop.current();
+      let released = false;
+      const release = () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        record.readinessPending = Math.max(0, record.readinessPending - 1);
+        pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
+        scheduleSettlementLoop.current();
+      };
+      readiness.then(release, release);
+      return release;
+    },
+    [],
+  );
+
+  /**
    * Drop the measurement in hand without touching mount state. §13's opening rule:
    * an invalid measurement must never survive as a placeholder height, and §12
    * rule 6 rejects any in-flight measurement captured under the old fingerprint.
    */
-  const invalidateMeasurement = useCallback((record: ContentRowRecord) => {
-    record.measuredElement = null;
-    record.measuredHeight = undefined;
-    record.measuredFingerprint = undefined;
-    record.settled = false;
-    record.mountState = 'MOUNTED_UNMEASURED';
-  }, []);
+  const invalidateMeasurement = useCallback(
+    (record: ContentRowRecord) => {
+      record.measuredElement = null;
+      record.measuredHeight = undefined;
+      record.measuredFingerprint = undefined;
+      record.settled = false;
+      record.mountState = 'MOUNTED_UNMEASURED';
+      pendingSettlements.current.delete(record.token);
+      beginMeasurementWork(record);
+    },
+    [beginMeasurementWork],
+  );
 
   /**
    * Start a new generation for a row whose source changed (§7.5). The measured
    * element is re-keyed, so the row re-measures from scratch instead of reusing a
    * height that described the previous source.
    */
-  const startGeneration = useCallback((record: ContentRowRecord, fingerprint: string) => {
-    record.generation = nextGeneration(record.generation);
-    record.fingerprint = fingerprint;
-    record.measuredFingerprint = fingerprint;
-    record.measuredElement = null;
-    record.measuredHeight = undefined;
-    record.settled = false;
-    record.pins.delete('debug');
-    record.mounted = true;
-    record.mountState = 'MOUNTED_UNMEASURED';
-    record.setMounted(true, record.generation);
-  }, []);
+  const startGeneration = useCallback(
+    (record: ContentRowRecord, fingerprint: string) => {
+      record.generation = nextGeneration(record.generation);
+      record.fingerprint = fingerprint;
+      record.measuredFingerprint = fingerprint;
+      record.measuredElement = null;
+      record.measuredHeight = undefined;
+      record.settled = false;
+      record.mounted = true;
+      record.mountState = 'MOUNTED_UNMEASURED';
+      pendingSettlements.current.delete(record.token);
+      beginMeasurementWork(record);
+      record.setMounted(true, record.generation);
+    },
+    [beginMeasurementWork],
+  );
 
   const unregisterRow = useCallback(
     (record: ContentRowRecord) => {
@@ -204,6 +441,7 @@ export function ContentRowWindowingProvider({
       record.commitWaiters.clear();
       record.measurementWaiters.forEach((resolve) => resolve());
       record.measurementWaiters.clear();
+      record.readinessPending = 0;
       if (record.measuredElement) {
         resizeObserver.current?.unobserve(record.measuredElement);
         mountedElements.current.delete(record.measuredElement);
@@ -243,6 +481,7 @@ export function ContentRowWindowingProvider({
         oversized: false,
         pinnedByPolicy: null,
         pins: new Set(),
+        readinessPending: 0,
         measurementWaiters: new Set(),
         setMounted: registration.setMounted,
         commitWaiters: new Set(),
@@ -250,11 +489,17 @@ export function ContentRowWindowingProvider({
       rows.current.set(record.token, record);
       indexByMessage(record);
       diagnostics.current.recordRegistration();
+      // §8.1 — every newly registered row starts mounted and begins its measurement and
+      // settlement budget immediately, never as an estimated placeholder.
+      beginMeasurementWork(record);
       return () => {
+        pendingSettlements.current.delete(record.token);
+        settlementDeadlines.current.delete(record.token);
         unregisterRow(record);
+        maybeCompleteWarmUp();
       };
     },
-    [currentBucket, indexByMessage, unregisterRow],
+    [beginMeasurementWork, currentBucket, indexByMessage, maybeCompleteWarmUp, unregisterRow],
   );
 
   const updateRow = useCallback(
@@ -333,12 +578,13 @@ export function ContentRowWindowingProvider({
       record.settled = false;
       record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
       diagnostics.current.recordAcceptedMeasurement(source);
-      if (record.measurementWaiters.size > 0) {
-        record.measurementWaiters.forEach((resolve) => resolve());
-        record.measurementWaiters.clear();
-      }
+      // §8.1 step 4 — the row settles after this measurement plus two quiet frames; any
+      // further resize restarts the count, so "quiet" means "no resize in between".
+      pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
+      scheduleSettlementLoop.current();
+      releaseMeasurementWaiters(record);
     },
-    [],
+    [releaseMeasurementWaiters],
   );
 
   /**
@@ -346,47 +592,52 @@ export function ContentRowWindowingProvider({
    * persistent shell) to the shared resize observer. The observer is the only resize
    * target, so a placeholder shell can never report a geometric measurement (§20.2.3).
    */
-  const registerMountedContent = useCallback((registration: MountedContentRegistration) => {
-    const record = rows.current.get(registration.token);
-    if (!record || record.generation !== registration.generation) {
-      // A registration from a superseded generation must not become the target.
-      return () => {};
-    }
-    const previous = record.measuredElement;
-    if (previous && previous !== registration.element) {
-      resizeObserver.current?.unobserve(previous);
-      mountedElements.current.delete(previous);
-    }
-    const bucketChanged = record.layoutBucket !== registration.layoutBucket;
-    if (bucketChanged) {
-      // §13 — a bucket change invalidates the measurement. The fingerprint capture
-      // stays valid, so the next measurement in the new bucket is accepted.
-      record.layoutBucket = registration.layoutBucket;
-    }
-    const elementChanged = previous !== registration.element;
-    if (elementChanged || bucketChanged) {
-      record.measuredHeight = undefined;
-      record.settled = false;
-      record.mountState = 'MOUNTED_UNMEASURED';
-    }
-    record.measuredElement = registration.element;
-    mountedElements.current.set(registration.element, {
-      token: registration.token,
-      generation: registration.generation,
-      layoutBucket: registration.layoutBucket,
-    });
-    resizeObserver.current?.observe(registration.element);
-    return () => {
-      const mapping = mountedElements.current.get(registration.element);
-      if (mapping && mapping.generation === registration.generation) {
-        mountedElements.current.delete(registration.element);
-        resizeObserver.current?.unobserve(registration.element);
+  const registerMountedContent = useCallback(
+    (registration: MountedContentRegistration) => {
+      const record = rows.current.get(registration.token);
+      if (!record || record.generation !== registration.generation) {
+        // A registration from a superseded generation must not become the target.
+        return () => {};
       }
-      if (record.measuredElement === registration.element) {
-        record.measuredElement = null;
+      const previous = record.measuredElement;
+      if (previous && previous !== registration.element) {
+        resizeObserver.current?.unobserve(previous);
+        mountedElements.current.delete(previous);
       }
-    };
-  }, []);
+      const bucketChanged = record.layoutBucket !== registration.layoutBucket;
+      if (bucketChanged) {
+        // §13 — a bucket change invalidates the measurement. The fingerprint capture
+        // stays valid, so the next measurement in the new bucket is accepted.
+        record.layoutBucket = registration.layoutBucket;
+      }
+      const elementChanged = previous !== registration.element;
+      if (elementChanged || bucketChanged) {
+        record.measuredHeight = undefined;
+        record.settled = false;
+        record.mountState = 'MOUNTED_UNMEASURED';
+        pendingSettlements.current.delete(record.token);
+        beginMeasurementWork(record);
+      }
+      record.measuredElement = registration.element;
+      mountedElements.current.set(registration.element, {
+        token: registration.token,
+        generation: registration.generation,
+        layoutBucket: registration.layoutBucket,
+      });
+      resizeObserver.current?.observe(registration.element);
+      return () => {
+        const mapping = mountedElements.current.get(registration.element);
+        if (mapping && mapping.generation === registration.generation) {
+          mountedElements.current.delete(registration.element);
+          resizeObserver.current?.unobserve(registration.element);
+        }
+        if (record.measuredElement === registration.element) {
+          record.measuredElement = null;
+        }
+      };
+    },
+    [beginMeasurementWork],
+  );
 
   /**
    * Resolve the message shell that owns a message's rows, mounting them on the way.
@@ -425,6 +676,8 @@ export function ContentRowWindowingProvider({
       updateRow,
       registerMountedContent,
       reportMountedContentHeight,
+      markRowSettled,
+      registerReadiness,
       getLayoutBucket,
       ensureMessageContentMounted,
       getDiagnostics,
@@ -434,6 +687,8 @@ export function ContentRowWindowingProvider({
       updateRow,
       registerMountedContent,
       reportMountedContentHeight,
+      markRowSettled,
+      registerReadiness,
       getLayoutBucket,
       ensureMessageContentMounted,
       getDiagnostics,
@@ -449,8 +704,19 @@ export function ContentRowWindowingProvider({
    * the mapping is looked up by element and validated against the record (§7.4).
    */
   useEffect(() => {
+    // Captured so teardown never reads a ref after unmount.
+    const loop = settlementLoop.current;
+    const pending = pendingSettlements.current;
+    const deadlines = settlementDeadlines.current;
     if (typeof ResizeObserver === 'undefined') {
-      return;
+      return () => {
+        if (loop.frame != null) {
+          cancelAnimationFrame(loop.frame);
+          loop.frame = undefined;
+        }
+        pending.clear();
+        deadlines.clear();
+      };
     }
     const observer = new ResizeObserver((entries) => {
       entries.forEach((entry) => {
@@ -479,8 +745,45 @@ export function ContentRowWindowingProvider({
     return () => {
       observer.disconnect();
       resizeObserver.current = undefined;
+      if (loop.frame != null) {
+        cancelAnimationFrame(loop.frame);
+        loop.frame = undefined;
+      }
+      pending.clear();
+      deadlines.clear();
     };
   }, [reportMountedContentHeight]);
+
+  /**
+   * §8.1 step 3 — the provider waits for `document.fonts.ready` before any row may
+   * settle. Fonts are a document-level fact, so this is established once; environments
+   * without the Font Loading API are treated as already ready.
+   */
+  useEffect(() => {
+    const fonts = (typeof document === 'undefined' ? undefined : document.fonts) as
+      | FontFaceSet
+      | undefined;
+    const ready = fonts?.ready;
+    if (!ready || typeof ready.then !== 'function') {
+      fontsReady.current = true;
+      scheduleSettlementLoop.current();
+      maybeCompleteWarmUp();
+      return;
+    }
+    let cancelled = false;
+    const markReady = () => {
+      if (cancelled) {
+        return;
+      }
+      fontsReady.current = true;
+      scheduleSettlementLoop.current();
+      maybeCompleteWarmUp();
+    };
+    ready.then(markReady, markReady);
+    return () => {
+      cancelled = true;
+    };
+  }, [maybeCompleteWarmUp]);
 
   // Development-only console handle (§23). Production installs nothing.
   useEffect(() => {
@@ -502,6 +805,9 @@ export function ContentRowWindowingProvider({
    */
   useEffect(() => {
     conversationRef.current = conversationId ?? null;
+    // A new conversation starts a fresh warm-up phase (§8.1).
+    warmUpComplete.current = false;
+    diagnostics.current.startWarmUp();
     rows.current.forEach((record) => {
       if (record.conversationId === conversationRef.current) {
         return;

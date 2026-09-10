@@ -87,6 +87,9 @@ export type ContentRowPinReason =
   | 'materialize'
   | 'latest'
   | 'submitting'
+  /** §8.1 — the row exceeded the settlement timeout, so it is effectively
+   *  always-mounted and must never become a placeholder. */
+  | 'settlement-timeout'
   | 'debug';
 
 export type ContentRowMaterializeReason = 'screenshot' | 'find' | 'selection' | 'debug';
@@ -241,6 +244,8 @@ export type ContentRowWindowingRuntime = Pick<
   | 'updateRow'
   | 'registerMountedContent'
   | 'reportMountedContentHeight'
+  | 'markRowSettled'
+  | 'registerReadiness'
   | 'getLayoutBucket'
   | 'ensureMessageContentMounted'
   | 'getDiagnostics'
@@ -284,6 +289,12 @@ export type ContentRowRecord = {
   /** Reason the row can never unmount, e.g. a settlement timeout (§8.1). */
   pinnedByPolicy: ContentRowPinReason | null;
   pins: Set<ContentRowPinReason>;
+  /**
+   * Number of registered asynchronous renderers that have not reported ready (§8.2).
+   * A row with pending readiness cannot settle, and therefore cannot unmount. Not part
+   * of §7.3: the spec requires the readiness behaviour but names no field for it.
+   */
+  readinessPending: number;
   /**
    * Released when a caller waiting on a current-generation measurement can proceed
    * (§20.7.2). Declared with the record so the settle path does not have to grow

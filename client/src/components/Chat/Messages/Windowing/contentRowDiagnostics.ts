@@ -115,6 +115,7 @@ export function createPinReasonCountMap(): Record<ContentRowPinReason, number> {
     materialize: 0,
     latest: 0,
     submitting: 0,
+    'settlement-timeout': 0,
     debug: 0,
   };
 }
