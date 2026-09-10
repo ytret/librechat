@@ -122,6 +122,20 @@ export type LayoutBucketInput = {
 
 export const CONTENT_ROW_OVERSCAN_PX = 800;
 export const CONTENT_ROW_UNMOUNT_HYSTERESIS_PX = 1600;
+/**
+ * How far ahead to mount, in milliseconds of measured travel. A fixed lead cannot keep up with a
+ * fast fling: at high velocity the reader crosses more than the lead distance within one frame,
+ * so rows enter the viewport before any pass has considered them and the viewport renders empty.
+ * Scaling the lead by measured velocity is what §10 sanctions ("adjust lead based on measured
+ * mount cost/velocity") in preference to raising the global overscan.
+ */
+export const CONTENT_ROW_VELOCITY_LEAD_MS = 220;
+/** Upper bound on the velocity-scaled lead, so a fling cannot mount the whole conversation. */
+export const CONTENT_ROW_MAX_LEAD_PX = 4800;
+/** Exponential smoothing factor for scroll velocity; lower is smoother and less reactive. */
+export const CONTENT_ROW_VELOCITY_SMOOTHING = 0.35;
+/** Velocity below this (px/ms) is treated as stationary, so the base lead applies. */
+export const CONTENT_ROW_VELOCITY_MIN_PX_PER_MS = 0.5;
 export const MAX_MOUNTS_PER_FRAME = 4;
 export const MAX_UNMOUNTS_PER_FRAME = 8;
 export const MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX = 100;
@@ -469,6 +483,14 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   appliedPasses: number;
   /** Total geometry passes scheduled. */
   scheduledPasses: number;
+  /** Largest mount lead actually used, after velocity scaling. */
+  maxLeadPx: number;
+  /**
+   * Geometry passes that ran with no mounted row intersecting the viewport while rows were
+   * registered: each one is a moment the reader saw empty background. Must stay zero during
+   * ordinary scrolling, including a fling.
+   */
+  blankViewportPasses: number;
   /** Schedules attributed to their trigger, so idle work can be traced to a cause. */
   scheduledByReason: Record<ContentRowPassScheduleReason, number>;
   /** Settlement-loop passes run. A frozen value means the loop is idle. */

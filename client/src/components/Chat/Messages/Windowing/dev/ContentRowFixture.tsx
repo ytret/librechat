@@ -396,6 +396,16 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             String(snapshot.unmountCountsPerFrame.max),
           ],
           [
+            'no empty-background frames (fling test)',
+            snapshot.blankViewportPasses === 0,
+            snapshot.blankViewportPasses + ' blank passes',
+          ],
+          [
+            'demotion did not disable windowing',
+            snapshot.alwaysMountedRows < snapshot.registeredRows,
+            snapshot.alwaysMountedRows + ' of ' + snapshot.registeredRows + ' always-mounted',
+          ],
+          [
             'no materialization timeout',
             snapshot.materializationTimeouts === 0,
             String(snapshot.materializationTimeouts),
@@ -438,6 +448,11 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             '  max ' +
             (snapshot.asyncCorrection.max ?? 0) +
             'px',
+        );
+        console.log(
+          'mount lead                = ' +
+            Math.round(snapshot.maxLeadPx) +
+            'px   (base 800px, scales with scroll velocity up to 4800px)',
         );
         console.log('--- context ---');
         console.log(

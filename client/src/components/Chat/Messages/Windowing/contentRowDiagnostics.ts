@@ -69,6 +69,8 @@ export type ContentRowDiagnosticsCollector = {
   recordPassDiscarded(reason: ContentRowPassDiscardReason): void;
   recordSettlementPass(): void;
   recordScrollWrite(): void;
+  recordLead(leadPx: number): void;
+  recordBlankViewportPass(): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
   completeWarmUp(at?: number): void;
@@ -338,6 +340,8 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let scheduledByReason = createPassScheduleCountMap();
   let settlementPasses = 0;
   let scrollWrites = 0;
+  let maxLeadPx = 0;
+  let blankViewportPasses = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -416,6 +420,14 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordScrollWrite() {
       scrollWrites += 1;
     },
+    recordLead(leadPx) {
+      if (leadPx > maxLeadPx) {
+        maxLeadPx = leadPx;
+      }
+    },
+    recordBlankViewportPass() {
+      blankViewportPasses += 1;
+    },
     recordOverBudgetCorrection() {
       overBudgetCorrections += 1;
     },
@@ -462,6 +474,8 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         scheduledByReason: { ...scheduledByReason },
         settlementPasses,
         scrollWrites,
+        maxLeadPx,
+        blankViewportPasses,
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -489,6 +503,8 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       scheduledByReason = createPassScheduleCountMap();
       settlementPasses = 0;
       scrollWrites = 0;
+      maxLeadPx = 0;
+      blankViewportPasses = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;

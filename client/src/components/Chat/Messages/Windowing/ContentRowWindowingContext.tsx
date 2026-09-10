@@ -52,8 +52,12 @@ import {
   MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX,
   MIN_ANCHOR_CORRECTION_PX,
   NAVIGATION_MEASUREMENT_TIMEOUT_MS,
+  CONTENT_ROW_MAX_LEAD_PX,
   CONTENT_ROW_OVERSCAN_PX,
   CONTENT_ROW_QUIET_FRAMES,
+  CONTENT_ROW_VELOCITY_LEAD_MS,
+  CONTENT_ROW_VELOCITY_MIN_PX_PER_MS,
+  CONTENT_ROW_VELOCITY_SMOOTHING,
   CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
   CONTENT_ROW_UNMOUNT_HYSTERESIS_PX,
   MAX_MOUNTS_PER_FRAME,
@@ -196,6 +200,9 @@ export function ContentRowWindowingProvider({
   const directionEpoch = useRef(0);
   const lastScrollTop = useRef<number | null>(null);
   const lastScrollDirection = useRef(0);
+  /** Smoothed scroll velocity in px/ms, used to scale the mount lead. */
+  const scrollVelocity = useRef(0);
+  const lastScrollAt = useRef<number | null>(null);
   const scheduleGeometryPass = useRef<(reason?: ContentRowPassScheduleReason) => void>(() => {});
   /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
   const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
@@ -710,6 +717,21 @@ export function ContentRowWindowingProvider({
   );
 
   /**
+   * Mount lead for the current velocity (§10). A fixed lead loses to a fling: the reader crosses
+   * more than the lead distance inside one frame, rows enter the viewport before any pass has
+   * looked at them, and the viewport renders empty. Scaling by measured velocity keeps the lead
+   * ahead of the reader without mounting the whole conversation.
+   */
+  const effectiveLeadPx = useCallback(() => {
+    const velocity = Math.abs(scrollVelocity.current);
+    if (velocity < CONTENT_ROW_VELOCITY_MIN_PX_PER_MS) {
+      return CONTENT_ROW_OVERSCAN_PX;
+    }
+    const scaled = velocity * CONTENT_ROW_VELOCITY_LEAD_MS;
+    return Math.min(CONTENT_ROW_MAX_LEAD_PX, Math.max(CONTENT_ROW_OVERSCAN_PX, scaled));
+  }, []);
+
+  /**
    * One geometry pass (§10). Reads every rectangle before writing any mount state, so a
    * write cannot invalidate a later measurement in the same pass.
    */
@@ -753,6 +775,11 @@ export function ContentRowWindowingProvider({
 
       const rootRect = root.getBoundingClientRect();
       const direction = lastScrollDirection.current;
+      const lead = effectiveLeadPx();
+      diagnostics.current.recordLead(lead);
+      // The unmount band must stay beyond the mount lead, or a row mounted because of the lead
+      // would be unmounted by the same pass and the pair would flap.
+      const hysteresis = Math.max(CONTENT_ROW_UNMOUNT_HYSTERESIS_PX, lead * 1.5);
 
       type Candidate = {
         record: ContentRowRecord;
@@ -765,6 +792,8 @@ export function ContentRowWindowingProvider({
       const unmountCandidates: Array<{ record: ContentRowRecord; distance: number }> = [];
       /** Every rectangle read in this pass, reused for anchor selection (§11.1 step 2). */
       const rects = new Map<ContentRowToken, { top: number; bottom: number }>();
+      /** Mounted rows intersecting the viewport right now: zero means the reader sees nothing. */
+      let mountedRowsInViewport = 0;
 
       // Batch-read every candidate rectangle before any write.
       rows.current.forEach((record) => {
@@ -775,12 +804,13 @@ export function ContentRowWindowingProvider({
         const rect = element.getBoundingClientRect();
         rects.set(record.token, { top: rect.top, bottom: rect.bottom });
         const inViewport = rect.bottom > rootRect.top && rect.top < rootRect.bottom;
-        const near =
-          rect.bottom >= rootRect.top - CONTENT_ROW_OVERSCAN_PX &&
-          rect.top <= rootRect.bottom + CONTENT_ROW_OVERSCAN_PX;
+        const inViewportNow = rect.bottom > rootRect.top && rect.top < rootRect.bottom;
+        const near = rect.bottom >= rootRect.top - lead && rect.top <= rootRect.bottom + lead;
         const far =
-          rect.bottom < rootRect.top - CONTENT_ROW_UNMOUNT_HYSTERESIS_PX ||
-          rect.top > rootRect.bottom + CONTENT_ROW_UNMOUNT_HYSTERESIS_PX;
+          rect.bottom < rootRect.top - hysteresis || rect.top > rootRect.bottom + hysteresis;
+        if (inViewportNow && record.mounted) {
+          mountedRowsInViewport += 1;
+        }
 
         if (!record.mounted && (near || mustBeMounted(record))) {
           let aheadInTravel = true;
@@ -807,6 +837,12 @@ export function ContentRowWindowingProvider({
           });
         }
       });
+
+      if (rows.current.size > 0 && mountedRowsInViewport === 0) {
+        // Every registered row is a placeholder while the reader is looking at the viewport:
+        // this is the empty-background case the fling test forbids (§10, §22.1).
+        diagnostics.current.recordBlankViewportPass();
+      }
 
       // §10 step 4 — visible rows first, then rows ahead in the travel direction, then by
       // distance. Rows inside the viewport bypass the ordinary mount budget and are counted.
@@ -850,7 +886,7 @@ export function ContentRowWindowingProvider({
         scheduleGeometryPass.current('deferred');
       }
     },
-    [applyTransitionBatch, currentBucket, scrollRootRef],
+    [applyTransitionBatch, currentBucket, effectiveLeadPx, scrollRootRef],
   );
 
   scheduleGeometryPass.current = (reason: ContentRowPassScheduleReason = 'discard') => {
@@ -1549,16 +1585,30 @@ export function ContentRowWindowingProvider({
     }
     const onScroll = () => {
       const top = root.scrollTop;
+      const now = performanceNow();
       const previous = lastScrollTop.current;
+      const previousAt = lastScrollAt.current;
       if (previous != null && top !== previous) {
-        const direction = top > previous ? 1 : -1;
+        const delta = top - previous;
+        const direction = delta > 0 ? 1 : -1;
         if (direction !== lastScrollDirection.current) {
           lastScrollDirection.current = direction;
           // §10 step 7 — a direction change invalidates queued priority decisions.
           directionEpoch.current += 1;
         }
+        // Smooth the velocity so one fast frame cannot inflate the lead, and one quiet frame
+        // cannot collapse it. px/ms is frame-rate independent.
+        const elapsed = previousAt == null ? 0 : Math.max(1, now - previousAt);
+        const instantaneous = Math.abs(delta) / elapsed;
+        scrollVelocity.current =
+          scrollVelocity.current * (1 - CONTENT_ROW_VELOCITY_SMOOTHING) +
+          instantaneous * CONTENT_ROW_VELOCITY_SMOOTHING;
+      } else if (previousAt != null && now - previousAt > 120) {
+        // Stationary for a while: decay the lead back to the base overscan.
+        scrollVelocity.current = 0;
       }
       lastScrollTop.current = top;
+      lastScrollAt.current = now;
       scheduleGeometryPass.current('scroll');
     };
     // §11.4 — while this provider owns correction, native anchoring must not also run.

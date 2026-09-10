@@ -469,6 +469,50 @@ describe('unmount budget and hysteresis', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('unmount eligibility in the geometry pass', () => {
+  it('scales the mount lead with scroll velocity so a fling does not show empty background', () => {
+    render(<Harness>{manyRows(20)}</Harness>);
+    settleAll();
+    // park every row far away so all are placeholders
+    for (let index = 0; index < 20; index++) {
+      setRowRect(`m${index}`, { top: -20000 - index * 100, bottom: -19900 - index * 100 });
+    }
+    scrollBy(5);
+    flushFrames(3);
+    expect(placeholderRows()).toBe(20);
+    expect(api.getDiagnostics().maxLeadPx).toBeLessThanOrEqual(CONTENT_ROW_OVERSCAN_PX);
+
+    // now move the reader a long way in one frame: with a fixed 800px lead, rows 15000px away
+    // would not even be candidates and the viewport would render empty
+    scrollTopValue += 15000;
+    const root = document.querySelector('.scroll-root');
+    act(() => {
+      root?.dispatchEvent(new Event('scroll'));
+    });
+    flushFrames(2);
+    const snapshot = api.getDiagnostics();
+    expect(snapshot.maxLeadPx).toBeGreaterThan(CONTENT_ROW_OVERSCAN_PX);
+  });
+
+  it('counts a blank-viewport pass when no mounted row is visible', () => {
+    render(<Harness>{manyRows(3)}</Harness>);
+    settleAll();
+    for (let index = 0; index < 3; index++) {
+      setRowRect(`m${index}`, { top: -20000 - index * 100, bottom: -19900 - index * 100 });
+    }
+    scrollBy(5);
+    flushFrames(3);
+    expect(placeholderRows()).toBe(3);
+    expect(api.getDiagnostics().blankViewportPasses).toBeGreaterThan(0);
+  });
+
+  it('reports the base lead when stationary', () => {
+    render(<Harness>{manyRows(3)}</Harness>);
+    settleAll();
+    scrollBy(1);
+    flushFrames(2);
+    expect(api.getDiagnostics().maxLeadPx).toBe(CONTENT_ROW_OVERSCAN_PX);
+  });
+
   it("does not exhaust a row's settlement budget across repeated remounts", () => {
     // Regression: the attempt budget must bound churn WITHIN a mounted window. If a remount
     // spends an attempt, scrolling far enough demotes every row and windowing silently
