@@ -454,6 +454,23 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             Math.round(snapshot.maxLeadPx) +
             'px   (base 800px, scales with scroll velocity up to 4800px)',
         );
+        console.log(
+          'scroll delta max          = ' +
+            Math.round(snapshot.maxScrollDeltaPx) +
+            'px   (largest movement between two scroll events)',
+        );
+        console.log(
+          'blank-pass scroll delta   = ' +
+            Math.round(snapshot.maxScrollDeltaOnBlankPassPx) +
+            'px   (largest jump that showed empty background)',
+        );
+        console.log('attempts by source        = ' + JSON.stringify(snapshot.attemptsBySource));
+        const attempts = snapshot.settlementTimeoutDetails.map((d) => d.attempts);
+        console.log(
+          'demotion attempts         = ' +
+            JSON.stringify(attempts.slice(0, 10)) +
+            (attempts.length > 10 ? ' ... (' + attempts.length + ' rows)' : ''),
+        );
         console.log('--- context ---');
         console.log(
           'timeouts=' +

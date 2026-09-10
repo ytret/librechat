@@ -21,6 +21,7 @@ const detail = (debugKey: string) => ({
   kind: 'markdown' as const,
   elapsedMs: 2000,
   reason: 'budget-expired' as const,
+  attempts: 1,
 });
 
 describe('summarizeValues', () => {

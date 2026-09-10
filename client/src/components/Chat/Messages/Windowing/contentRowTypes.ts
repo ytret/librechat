@@ -381,6 +381,15 @@ export type ContentRowFrameStats = {
 };
 
 /** Which trigger scheduled a geometry pass. Attribution for the idle-work check. */
+/** Which call path armed a settlement budget. Diagnostic attribution for attempt counts. */
+export type ContentRowAttemptSource =
+  | 'register'
+  | 'mount'
+  | 'content'
+  | 'rearm'
+  | 'invalidate'
+  | 'generation';
+
 export type ContentRowPassScheduleReason =
   | 'register'
   | 'warm-up'
@@ -409,6 +418,8 @@ export type ContentRowTimeoutDetail = {
   elapsedMs: number;
   /** Which condition demoted the row. */
   reason: ContentRowDemotionReason;
+  /** Settlement attempts spent on this row in its current mounted window. */
+  attempts: number;
 };
 
 /**
@@ -485,6 +496,12 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   scheduledPasses: number;
   /** Largest mount lead actually used, after velocity scaling. */
   maxLeadPx: number;
+  /** Largest distance the reader moved between two scroll events, in CSS pixels. */
+  maxScrollDeltaPx: number;
+  /** Largest single scroll event delta that produced a blank-viewport pass. */
+  maxScrollDeltaOnBlankPassPx: number;
+  /** Settlement attempts armed, by call path. Names which path spends the attempt budget. */
+  attemptsBySource: Record<ContentRowAttemptSource, number>;
   /**
    * Geometry passes that ran with no mounted row intersecting the viewport while rows were
    * registered: each one is a moment the reader saw empty background. Must stay zero during

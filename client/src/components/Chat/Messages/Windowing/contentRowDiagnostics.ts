@@ -21,6 +21,7 @@ import {
   type ContentRowDiagnosticsLive,
   type ContentRowDiagnosticsSnapshot,
   type ContentRowFrameStats,
+  type ContentRowAttemptSource,
   type ContentRowKind,
   type ContentRowMaterializeReason,
   type ContentRowMountState,
@@ -70,7 +71,9 @@ export type ContentRowDiagnosticsCollector = {
   recordSettlementPass(): void;
   recordScrollWrite(): void;
   recordLead(leadPx: number): void;
-  recordBlankViewportPass(): void;
+  recordBlankViewportPass(scrollDeltaPx: number): void;
+  recordScrollDelta(deltaPx: number): void;
+  recordSettlementAttempt(source: ContentRowAttemptSource): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
   completeWarmUp(at?: number): void;
@@ -111,6 +114,17 @@ export function createRejectReasonCountMap(): Record<ContentRowRejectReason, num
     'bucket-mismatch': 0,
     'fingerprint-mismatch': 0,
     'invalid-height': 0,
+  };
+}
+
+export function createAttemptSourceCountMap(): Record<ContentRowAttemptSource, number> {
+  return {
+    register: 0,
+    mount: 0,
+    content: 0,
+    rearm: 0,
+    invalidate: 0,
+    generation: 0,
   };
 }
 
@@ -342,6 +356,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let scrollWrites = 0;
   let maxLeadPx = 0;
   let blankViewportPasses = 0;
+  let maxScrollDeltaPx = 0;
+  let maxScrollDeltaOnBlankPassPx = 0;
+  let attemptsBySource = createAttemptSourceCountMap();
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -425,8 +442,19 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         maxLeadPx = leadPx;
       }
     },
-    recordBlankViewportPass() {
+    recordBlankViewportPass(scrollDeltaPx) {
       blankViewportPasses += 1;
+      if (Math.abs(scrollDeltaPx) > maxScrollDeltaOnBlankPassPx) {
+        maxScrollDeltaOnBlankPassPx = Math.abs(scrollDeltaPx);
+      }
+    },
+    recordSettlementAttempt(source) {
+      attemptsBySource[source] += 1;
+    },
+    recordScrollDelta(deltaPx) {
+      if (Math.abs(deltaPx) > maxScrollDeltaPx) {
+        maxScrollDeltaPx = Math.abs(deltaPx);
+      }
     },
     recordOverBudgetCorrection() {
       overBudgetCorrections += 1;
@@ -475,7 +503,10 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         settlementPasses,
         scrollWrites,
         maxLeadPx,
+        maxScrollDeltaPx,
+        maxScrollDeltaOnBlankPassPx,
         blankViewportPasses,
+        attemptsBySource: { ...attemptsBySource },
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -504,7 +535,10 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       settlementPasses = 0;
       scrollWrites = 0;
       maxLeadPx = 0;
+      maxScrollDeltaPx = 0;
+      maxScrollDeltaOnBlankPassPx = 0;
       blankViewportPasses = 0;
+      attemptsBySource = createAttemptSourceCountMap();
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;

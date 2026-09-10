@@ -31,6 +31,7 @@ import {
 } from './contentRowDiagnostics';
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
 import type {
+  ContentRowAttemptSource,
   ContentRowDemotionReason,
   ContentRowDiagnosticsSnapshot,
   ContentRowMaterializeReason,
@@ -203,6 +204,8 @@ export function ContentRowWindowingProvider({
   /** Smoothed scroll velocity in px/ms, used to scale the mount lead. */
   const scrollVelocity = useRef(0);
   const lastScrollAt = useRef<number | null>(null);
+  /** Signed scroll delta of the most recent scroll event, for blank-pass attribution. */
+  const lastScrollDelta = useRef(0);
   const scheduleGeometryPass = useRef<(reason?: ContentRowPassScheduleReason) => void>(() => {});
   /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
   const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
@@ -299,6 +302,7 @@ export function ContentRowWindowingProvider({
         kind: record.kind,
         elapsedMs,
         reason,
+        attempts: record.settlementAttempts,
       });
       if (record.readinessPending > 0) {
         diagnostics.current.recordReadinessTimeout({
@@ -306,6 +310,7 @@ export function ContentRowWindowingProvider({
           kind: record.kind,
           elapsedMs,
           reason,
+          attempts: record.settlementAttempts,
         });
       }
       maybeCompleteWarmUp();
@@ -320,12 +325,13 @@ export function ContentRowWindowingProvider({
    * stop unknown asynchronous geometry from ever becoming a placeholder.
    */
   const beginMeasurementWork = useCallback(
-    (record: ContentRowRecord) => {
+    (record: ContentRowRecord, source: ContentRowAttemptSource = 'register') => {
       if (!needsSettlementTracking(record)) {
         return;
       }
       const now = performanceNow();
       record.settlementAttempts += 1;
+      diagnostics.current.recordSettlementAttempt(source);
       if (record.settlementAttempts === 1) {
         record.settlementStartedAt = now;
       }
@@ -515,7 +521,7 @@ export function ContentRowWindowingProvider({
       record.settlementStartedAt = null;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
-      beginMeasurementWork(record);
+      beginMeasurementWork(record, 'mount');
       record.setMounted(true, record.generation);
       return true;
     },
@@ -841,7 +847,7 @@ export function ContentRowWindowingProvider({
       if (rows.current.size > 0 && mountedRowsInViewport === 0) {
         // Every registered row is a placeholder while the reader is looking at the viewport:
         // this is the empty-background case the fling test forbids (§10, §22.1).
-        diagnostics.current.recordBlankViewportPass();
+        diagnostics.current.recordBlankViewportPass(lastScrollDelta.current);
       }
 
       // §10 step 4 — visible rows first, then rows ahead in the travel direction, then by
@@ -924,7 +930,7 @@ export function ContentRowWindowingProvider({
       record.settled = false;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
-      beginMeasurementWork(record);
+      beginMeasurementWork(record, 'invalidate');
     },
     [beginMeasurementWork],
   );
@@ -948,7 +954,7 @@ export function ContentRowWindowingProvider({
       record.mounted = true;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
-      beginMeasurementWork(record);
+      beginMeasurementWork(record, 'generation');
       record.setMounted(true, record.generation);
     },
     [beginMeasurementWork],
@@ -1018,7 +1024,7 @@ export function ContentRowWindowingProvider({
       diagnostics.current.recordRegistration();
       // §8.1 — every newly registered row starts mounted and begins its measurement and
       // settlement budget immediately, never as an estimated placeholder.
-      beginMeasurementWork(record);
+      beginMeasurementWork(record, 'register');
       if (record.shellElement) {
         intersectionObserver.current?.observe(record.shellElement);
       }
@@ -1121,7 +1127,7 @@ export function ContentRowWindowingProvider({
           // The row has no settlement budget in flight. That happens when it already settled
           // once (which clears the deadline) and has now changed again, so this is a new
           // settlement attempt and it gets a full budget.
-          beginMeasurementWork(record);
+          beginMeasurementWork(record, 'rearm');
         }
         // Re-check: that call may have just demoted the row for exceeding its attempt budget.
         // Setting a pending entry afterwards would resurrect bookkeeping for a row that is
@@ -1183,7 +1189,7 @@ export function ContentRowWindowingProvider({
         record.settled = false;
         record.mountState = 'MOUNTED_UNMEASURED';
         pendingSettlements.current.delete(record.token);
-        beginMeasurementWork(record);
+        beginMeasurementWork(record, 'content');
       }
       record.measuredElement = registration.element;
       mountedElements.current.set(registration.element, {
@@ -1603,6 +1609,8 @@ export function ContentRowWindowingProvider({
         scrollVelocity.current =
           scrollVelocity.current * (1 - CONTENT_ROW_VELOCITY_SMOOTHING) +
           instantaneous * CONTENT_ROW_VELOCITY_SMOOTHING;
+        lastScrollDelta.current = delta;
+        diagnostics.current.recordScrollDelta(delta);
       } else if (previousAt != null && now - previousAt > 120) {
         // Stationary for a while: decay the lead back to the base overscan.
         scrollVelocity.current = 0;
