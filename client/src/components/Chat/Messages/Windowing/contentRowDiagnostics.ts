@@ -67,7 +67,7 @@ export type ContentRowDiagnosticsCollector = {
   recordPassScheduled(reason: ContentRowPassScheduleReason): void;
   recordPassApplied(): void;
   recordPassDiscarded(reason: ContentRowPassDiscardReason): void;
-  recordSettlementPass(pending: number, deadlines: number): void;
+  recordSettlementPass(): void;
   recordScrollWrite(): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
@@ -174,6 +174,8 @@ export function createEmptyDiagnosticsLive(): ContentRowDiagnosticsLive {
     mountedByKind: createKindCountMap(),
     mountStates: createMountStateCountMap(),
     measuredHeightDistribution: summarizeValues([]),
+    pendingSettlementRows: 0,
+    settlementDeadlineRows: 0,
     layoutBucket: null,
     reflowState: 'idle',
   };
@@ -193,11 +195,23 @@ export function createEmptyDiagnosticsLive(): ContentRowDiagnosticsLive {
  */
 export function createLiveDiagnosticsState(
   records: Iterable<ContentRowRecord>,
-  state: { layoutBucket: LayoutBucket | null; reflowState: ContentRowReflowState },
+  state: {
+    layoutBucket: LayoutBucket | null;
+    reflowState: ContentRowReflowState;
+    /**
+     * Settlement bookkeeping, supplied live by the provider. These are passed in rather than
+     * cached at pass time so that an idle provider reads as empty instead of frozen at the
+     * values it had when the settlement loop last ran.
+     */
+    pendingSettlementRows?: number;
+    settlementDeadlineRows?: number;
+  },
 ): ContentRowDiagnosticsLive {
   const live = createEmptyDiagnosticsLive();
   live.layoutBucket = state.layoutBucket;
   live.reflowState = state.reflowState;
+  live.pendingSettlementRows = state.pendingSettlementRows ?? 0;
+  live.settlementDeadlineRows = state.settlementDeadlineRows ?? 0;
   const heights: number[] = [];
 
   for (const record of records) {
@@ -322,8 +336,6 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let scheduledPasses = 0;
   let scheduledByReason = createPassScheduleCountMap();
   let settlementPasses = 0;
-  let pendingSettlementRows = 0;
-  let settlementDeadlineRows = 0;
   let scrollWrites = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
@@ -397,10 +409,8 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordPassDiscarded(reason) {
       discardedPasses[reason] += 1;
     },
-    recordSettlementPass(pending, deadlines) {
+    recordSettlementPass() {
       settlementPasses += 1;
-      pendingSettlementRows = pending;
-      settlementDeadlineRows = deadlines;
     },
     recordScrollWrite() {
       scrollWrites += 1;
@@ -450,8 +460,6 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         scheduledPasses,
         scheduledByReason: { ...scheduledByReason },
         settlementPasses,
-        pendingSettlementRows,
-        settlementDeadlineRows,
         scrollWrites,
         warmUpDurationMs,
         warmUpComplete,
@@ -479,8 +487,6 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       scheduledPasses = 0;
       scheduledByReason = createPassScheduleCountMap();
       settlementPasses = 0;
-      pendingSettlementRows = 0;
-      settlementDeadlineRows = 0;
       scrollWrites = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;

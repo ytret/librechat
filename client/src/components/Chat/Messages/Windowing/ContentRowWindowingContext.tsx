@@ -233,12 +233,24 @@ export function ContentRowWindowingProvider({
   }, []);
 
   /**
+   * Whether settlement bookkeeping is meaningful for a row. A row that can never become a
+   * placeholder — demoted by the settlement timeout, pinned by policy, or not `windowed` —
+   * needs no settlement tracking, no deadline, and must never schedule work again. Making this
+   * terminal is what guarantees the provider goes fully idle.
+   */
+  const needsSettlementTracking = (record: ContentRowRecord): boolean =>
+    record.policy === 'windowed' && record.pinnedByPolicy == null;
+
+  /**
    * Note that a row has geometry to measure. Arms the per-row settlement timeout (§8.1)
    * and starts the quiet-frame loop. A row that keeps resizing keeps getting
    * measurements, but the deadline is *not* refreshed by them: the timeout exists to
    * stop unknown asynchronous geometry from ever becoming a placeholder.
    */
   const beginMeasurementWork = useCallback((record: ContentRowRecord) => {
+    if (!needsSettlementTracking(record)) {
+      return;
+    }
     settlementDeadlines.current.set(
       record.token,
       performanceNow() + CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
@@ -296,9 +308,14 @@ export function ContentRowWindowingProvider({
       record.mountState = 'MOUNTED_MEASURED_SETTLED';
       pendingSettlements.current.delete(token);
       settlementDeadlines.current.delete(token);
-      // Settling is what makes a row eligible to unmount, so the window must be re-evaluated.
-      // The pass is frame-debounced, so a burst of settlements produces one pass.
-      scheduleGeometryPass.current('settled');
+      // Settling is what makes a row eligible to unmount, so the window must be re-evaluated —
+      // but only for a row that could actually become a placeholder. A row that can never
+      // unmount (demoted by the settlement timeout, pinned, forced, oversized, or not
+      // `windowed`) must not schedule work for the rest of its life, or a permanently changing
+      // row would keep the provider busy while the reader does nothing.
+      if (record.policy === 'windowed' && record.pinnedByPolicy == null) {
+        scheduleGeometryPass.current('settled');
+      }
       maybeCompleteWarmUp();
     },
     [maybeCompleteWarmUp],
@@ -373,10 +390,7 @@ export function ContentRowWindowingProvider({
     }
     loop.frame = requestAnimationFrame(() => {
       loop.frame = undefined;
-      diagnostics.current.recordSettlementPass(
-        pendingSettlements.current.size,
-        settlementDeadlines.current.size,
-      );
+      diagnostics.current.recordSettlementPass();
       applySettlementPass();
       if (pendingSettlements.current.size > 0 || settlementDeadlines.current.size > 0) {
         scheduleSettlementLoop.current();
@@ -410,8 +424,10 @@ export function ContentRowWindowingProvider({
       if (record.mountState === 'MOUNTED_MEASURED_SETTLED') {
         record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
       }
-      pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
-      scheduleSettlementLoop.current();
+      if (needsSettlementTracking(record)) {
+        pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
+        scheduleSettlementLoop.current();
+      }
       let released = false;
       const release = () => {
         if (released) {
@@ -419,6 +435,9 @@ export function ContentRowWindowingProvider({
         }
         released = true;
         record.readinessPending = Math.max(0, record.readinessPending - 1);
+        if (!needsSettlementTracking(record)) {
+          return;
+        }
         pendingSettlements.current.set(token, CONTENT_ROW_QUIET_FRAMES);
         scheduleSettlementLoop.current();
       };
@@ -1020,11 +1039,21 @@ export function ContentRowWindowingProvider({
       if (source === 'resize-observer' && previousHeight != null) {
         scheduleAsyncCorrection(record, height - previousHeight);
       }
-      pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
-      scheduleSettlementLoop.current();
+      if (needsSettlementTracking(record)) {
+        if (!settlementDeadlines.current.has(record.token)) {
+          // The row has no settlement budget in flight. That happens when it already settled
+          // once (which clears the deadline) and has now changed again, so this is a new
+          // settlement attempt and it gets a full budget. Without this, a row that settles and
+          // re-resizes could repeat forever and §8.1's timeout could never demote it — which is
+          // exactly what was observed: an unbounded settle/unsettle loop with no demotion.
+          beginMeasurementWork(record);
+        }
+        pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
+        scheduleSettlementLoop.current();
+      }
       releaseMeasurementWaiters(record);
     },
-    [releaseMeasurementWaiters, scheduleAsyncCorrection],
+    [beginMeasurementWork, releaseMeasurementWaiters, scheduleAsyncCorrection],
   );
 
   /** Re-measure a mounted row from its current element, after an invalidation. */
@@ -1311,6 +1340,8 @@ export function ContentRowWindowingProvider({
       createLiveDiagnosticsState(rows.current.values(), {
         layoutBucket: layoutBucket.current,
         reflowState: reflowState.current,
+        pendingSettlementRows: pendingSettlements.current.size,
+        settlementDeadlineRows: settlementDeadlines.current.size,
       }),
     );
   }, []);
@@ -1514,6 +1545,8 @@ export function ContentRowWindowingProvider({
         createLiveDiagnosticsState(rows.current.values(), {
           layoutBucket: layoutBucket.current,
           reflowState: reflowState.current,
+          pendingSettlementRows: pendingSettlements.current.size,
+          settlementDeadlineRows: settlementDeadlines.current.size,
         }),
     });
   }, [isDevelopment]);

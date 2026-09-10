@@ -501,6 +501,110 @@ describe('settlement timeout', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Oscillating rows: the settle/unsettle loop found in the browser gate        */
+/* -------------------------------------------------------------------------- */
+
+describe('a row that keeps changing size', () => {
+  /**
+   * Reproduces the browser-gate defect: a row that resizes on a cadence long enough for it to
+   * settle in the gaps. Before the fix it settled in every gap, which cleared its settlement
+   * deadline, and the next resize left it pending with no deadline. It could then cycle
+   * forever: the §8.1 timeout never fired, and each settlement scheduled another geometry
+   * pass, so the provider never went idle.
+   */
+  const oscillate = (frames: number, gapFrames = 3) => {
+    const { token, generation, element } = registered[0];
+    for (let index = 0; index < frames; index++) {
+      flushFrames(1);
+      if (index % gapFrames === 0) {
+        act(() => {
+          api.reportMountedContentHeight(
+            token,
+            generation,
+            api.getLayoutBucket(),
+            element,
+            200 + (index % 2 === 0 ? 40 : 0),
+            'resize-observer',
+          );
+        });
+      }
+    }
+  };
+
+  it('is eventually demoted to always-mounted instead of cycling forever', async () => {
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    // 40 frames at 60ms of simulated time: well past the 2s budget, and the row settles in the
+    // gaps between resizes exactly as the fixture's "never settles" rows do
+    for (let block = 0; block < 40; block++) {
+      oscillate(1, 1);
+      advanceClock(60);
+    }
+    const snapshot = api.getDiagnostics();
+    expect(snapshot.settlementTimeouts).toBe(1);
+    expect(snapshot.alwaysMountedRows).toBe(1);
+    expect(snapshot.settlementTimeoutDetails[0].debugKey).toBe('m1:markdown:0');
+    // and it is no longer pending settlement with no deadline
+    expect(snapshot.pendingSettlementRows).toBe(0);
+  });
+
+  it('goes idle once the row can no longer unmount', async () => {
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    for (let block = 0; block < 40; block++) {
+      oscillate(1, 1);
+      advanceClock(60);
+    }
+    expect(api.getDiagnostics().settlementTimeouts).toBe(1);
+
+    // From here on the row keeps changing, but it can never unmount, so the provider must not
+    // keep scheduling geometry passes. This is the "idle work" check that failed the gate.
+    const before = api.getDiagnostics();
+    const appliedBefore = before.appliedPasses;
+    const scheduledBefore = before.scheduledByReason.settled;
+    for (let block = 0; block < 20; block++) {
+      oscillate(1, 1);
+      advanceClock(60);
+      flushFrames(2);
+    }
+    const after = api.getDiagnostics();
+    expect(after.appliedPasses).toBe(appliedBefore);
+    expect(after.scheduledByReason.settled).toBe(scheduledBefore);
+    expect(after.settlementTimeouts).toBe(1);
+    // the demoted row leaves no settlement bookkeeping behind
+    expect(after.pendingSettlementRows).toBe(0);
+    expect(after.settlementDeadlineRows).toBe(0);
+    // and the settlement loop itself stops running
+    const loopPasses = after.settlementPasses;
+    flushFrames(10);
+    expect(api.getDiagnostics().settlementPasses).toBe(loopPasses);
+  });
+
+  it('still settles and goes idle for an ordinary row that stops changing', async () => {
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    flushFrames(CONTENT_ROW_QUIET_FRAMES + 1);
+    expect(settled()).toBe(1);
+    const applied = api.getDiagnostics().appliedPasses;
+    flushFrames(10);
+    expect(api.getDiagnostics().appliedPasses).toBe(applied);
+    expect(api.getDiagnostics().settlementPasses).toBe(api.getDiagnostics().settlementPasses);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Warm-up                                                                    */
 /* -------------------------------------------------------------------------- */
 

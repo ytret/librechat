@@ -389,6 +389,13 @@ export type ContentRowDiagnosticsLive = {
   mountStates: Record<ContentRowMountState, number>;
   /** Statistic over the measured heights of all rows that currently hold one. */
   measuredHeightDistribution: ContentRowValueStats;
+  /**
+   * Settlement bookkeeping, read live from the provider rather than sampled at pass time.
+   * Sampling would freeze these at their pre-cleanup values the moment the loop went idle,
+   * which reads as "one row is stuck pending" when nothing is actually pending.
+   */
+  pendingSettlementRows: number;
+  settlementDeadlineRows: number;
   layoutBucket: LayoutBucket | null;
   reflowState: ContentRowReflowState;
 };
@@ -431,10 +438,8 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   scheduledPasses: number;
   /** Schedules attributed to their trigger, so idle work can be traced to a cause. */
   scheduledByReason: Record<ContentRowPassScheduleReason, number>;
-  /** Settlement-loop passes run, and the work items each pass had. */
+  /** Settlement-loop passes run. A frozen value means the loop is idle. */
   settlementPasses: number;
-  pendingSettlementRows: number;
-  settlementDeadlineRows: number;
   /** Writes to scrollTop made by the provider, in total. */
   scrollWrites: number;
   warmUpDurationMs: number | null;
