@@ -34,6 +34,7 @@ import type {
   ContentRowDiagnosticsSnapshot,
   ContentRowMaterializeReason,
   ContentRowMeasurementSource,
+  ContentRowPassScheduleReason,
   ContentRowPinReason,
   ContentRowRecord,
   ContentRowReflowState,
@@ -193,7 +194,7 @@ export function ContentRowWindowingProvider({
   const directionEpoch = useRef(0);
   const lastScrollTop = useRef<number | null>(null);
   const lastScrollDirection = useRef(0);
-  const scheduleGeometryPass = useRef<() => void>(() => {});
+  const scheduleGeometryPass = useRef<(reason?: ContentRowPassScheduleReason) => void>(() => {});
   /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
   const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
   const transitionBatchId = useRef(0);
@@ -271,7 +272,7 @@ export function ContentRowWindowingProvider({
     // §8.1 step 6 — after warm-up the provider evaluates distance and unmounts eligible
     // distant rows. Without this pass nothing would unmount until the reader scrolled, since
     // the only other triggers are scroll and intersection events.
-    scheduleGeometryPass.current();
+    scheduleGeometryPass.current('warm-up');
   }, []);
 
   /**
@@ -297,7 +298,7 @@ export function ContentRowWindowingProvider({
       settlementDeadlines.current.delete(token);
       // Settling is what makes a row eligible to unmount, so the window must be re-evaluated.
       // The pass is frame-debounced, so a burst of settlements produces one pass.
-      scheduleGeometryPass.current();
+      scheduleGeometryPass.current('settled');
       maybeCompleteWarmUp();
     },
     [maybeCompleteWarmUp],
@@ -372,6 +373,10 @@ export function ContentRowWindowingProvider({
     }
     loop.frame = requestAnimationFrame(() => {
       loop.frame = undefined;
+      diagnostics.current.recordSettlementPass(
+        pendingSettlements.current.size,
+        settlementDeadlines.current.size,
+      );
       applySettlementPass();
       if (pendingSettlements.current.size > 0 || settlementDeadlines.current.size > 0) {
         scheduleSettlementLoop.current();
@@ -515,6 +520,7 @@ export function ContentRowWindowingProvider({
           return;
         }
         target.scrollTop += amount;
+        diagnostics.current.recordScrollWrite();
         diagnostics.current.recordAsyncCorrection(amount);
         if (Math.abs(amount) > MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX) {
           diagnostics.current.recordOverBudgetCorrection();
@@ -618,11 +624,13 @@ export function ContentRowWindowingProvider({
             const target = Math.max(0, max);
             if (Math.abs(target - scrollBefore) >= MIN_ANCHOR_CORRECTION_PX) {
               root.scrollTop = target;
+              diagnostics.current.recordScrollWrite();
             }
           } else if (anchorElement && anchorTopBefore != null) {
             displacement = anchorElement.getBoundingClientRect().top - anchorTopBefore;
             if (Math.abs(displacement) >= MIN_ANCHOR_CORRECTION_PX) {
               root.scrollTop += displacement;
+              diagnostics.current.recordScrollWrite();
             }
           }
         }
@@ -672,18 +680,18 @@ export function ContentRowWindowingProvider({
       }
       if (pass.conversationEpoch !== conversationEpoch.current) {
         diagnostics.current.recordPassDiscarded('conversation-changed');
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('discard');
         return;
       }
       if (pass.directionEpoch !== directionEpoch.current) {
         diagnostics.current.recordPassDiscarded('direction-changed');
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('discard');
         return;
       }
       const bucket = currentBucket();
       if (pass.layoutBucket !== bucket) {
         diagnostics.current.recordPassDiscarded('bucket-changed');
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('discard');
         return;
       }
       diagnostics.current.recordPassApplied();
@@ -784,18 +792,20 @@ export function ContentRowWindowingProvider({
         mountCandidates.length - (viewportMounts.length + budgetedMounts.length) > 0 ||
         unmountCandidates.length - unmounts > 0;
       if (deferredWork && (mounts > 0 || unmounts > 0)) {
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('deferred');
       }
     },
     [applyTransitionBatch, currentBucket, scrollRootRef],
   );
 
-  scheduleGeometryPass.current = () => {
+  scheduleGeometryPass.current = (reason: ContentRowPassScheduleReason = 'discard') => {
+    // The reason is recorded even when a pass is already queued for this frame, so the
+    // attribution below accounts for every trigger and a repeated trigger is visible.
+    diagnostics.current.recordPassScheduled(reason);
     const loop = geometryLoop.current;
     if (loop.frame != null) {
       return;
     }
-    diagnostics.current.recordPassScheduled();
     const pass = {
       id: (geometryPassId.current += 1),
       conversationEpoch: conversationEpoch.current,
@@ -916,7 +926,7 @@ export function ContentRowWindowingProvider({
       if (record.shellElement) {
         intersectionObserver.current?.observe(record.shellElement);
       }
-      scheduleGeometryPass.current();
+      scheduleGeometryPass.current('register');
       return () => {
         pendingSettlements.current.delete(record.token);
         settlementDeadlines.current.delete(record.token);
@@ -1108,7 +1118,7 @@ export function ContentRowWindowingProvider({
         released = true;
         record.pins.delete(reason);
         diagnostics.current.recordUnpin(reason);
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('pin-release');
       };
     },
     [mountRow],
@@ -1139,7 +1149,7 @@ export function ContentRowWindowingProvider({
         if (root && previousScrollTop != null) {
           root.scrollTop = previousScrollTop;
         }
-        scheduleGeometryPass.current();
+        scheduleGeometryPass.current('materialize');
       };
 
       const ready = () => {
@@ -1237,7 +1247,7 @@ export function ContentRowWindowingProvider({
         invalidateMeasurement(record);
         remeasureRow(record);
       });
-      scheduleGeometryPass.current();
+      scheduleGeometryPass.current('layout-change');
     },
     [invalidateMeasurement, remeasureRow],
   );
@@ -1450,7 +1460,7 @@ export function ContentRowWindowingProvider({
     }
     let observer: IntersectionObserver | undefined;
     if (typeof IntersectionObserver !== 'undefined') {
-      observer = new IntersectionObserver(() => scheduleGeometryPass.current(), {
+      observer = new IntersectionObserver(() => scheduleGeometryPass.current('observer'), {
         root,
         rootMargin: `${CONTENT_ROW_OVERSCAN_PX}px 0px`,
         threshold: 0,
@@ -1474,14 +1484,14 @@ export function ContentRowWindowingProvider({
         }
       }
       lastScrollTop.current = top;
-      scheduleGeometryPass.current();
+      scheduleGeometryPass.current('scroll');
     };
     // §11.4 — while this provider owns correction, native anchoring must not also run.
     const previousOverflowAnchor = root.style.overflowAnchor;
     root.style.overflowAnchor = 'none';
 
     root.addEventListener('scroll', onScroll, { passive: true });
-    scheduleGeometryPass.current();
+    scheduleGeometryPass.current('observer-init');
     return () => {
       root.style.overflowAnchor = previousOverflowAnchor;
       root.removeEventListener('scroll', onScroll);
@@ -1520,7 +1530,7 @@ export function ContentRowWindowingProvider({
     warmUpComplete.current = false;
     conversationEpoch.current += 1;
     diagnostics.current.startWarmUp();
-    scheduleGeometryPass.current();
+    scheduleGeometryPass.current('conversation');
     rows.current.forEach((record) => {
       if (record.conversationId === conversationRef.current) {
         return;

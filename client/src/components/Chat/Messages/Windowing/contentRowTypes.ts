@@ -344,6 +344,21 @@ export type ContentRowFrameStats = {
   mean: number | null;
 };
 
+/** Which trigger scheduled a geometry pass. Attribution for the idle-work check. */
+export type ContentRowPassScheduleReason =
+  | 'register'
+  | 'warm-up'
+  | 'settled'
+  | 'deferred'
+  | 'pin-release'
+  | 'materialize'
+  | 'layout-change'
+  | 'conversation'
+  | 'observer'
+  | 'observer-init'
+  | 'scroll'
+  | 'discard';
+
 /** Why a scheduled geometry pass was discarded before doing any work (§10 step 7). */
 export type ContentRowPassDiscardReason =
   | 'conversation-changed'
@@ -414,6 +429,14 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   appliedPasses: number;
   /** Total geometry passes scheduled. */
   scheduledPasses: number;
+  /** Schedules attributed to their trigger, so idle work can be traced to a cause. */
+  scheduledByReason: Record<ContentRowPassScheduleReason, number>;
+  /** Settlement-loop passes run, and the work items each pass had. */
+  settlementPasses: number;
+  pendingSettlementRows: number;
+  settlementDeadlineRows: number;
+  /** Writes to scrollTop made by the provider, in total. */
+  scrollWrites: number;
   warmUpDurationMs: number | null;
   warmUpComplete: boolean;
 };

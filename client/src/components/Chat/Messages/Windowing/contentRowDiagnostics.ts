@@ -28,6 +28,7 @@ import {
   type ContentRowRecord,
   type ContentRowRejectReason,
   type ContentRowPassDiscardReason,
+  type ContentRowPassScheduleReason,
   type ContentRowReflowState,
   type ContentRowTimeoutDetail,
   type ContentRowValueStats,
@@ -63,9 +64,11 @@ export type ContentRowDiagnosticsCollector = {
   recordMountBatch(batch: ContentRowMountBatchDiagnostics): void;
   recordAsyncCorrection(correction: number): void;
   recordViewportBypass(count: number): void;
-  recordPassScheduled(): void;
+  recordPassScheduled(reason: ContentRowPassScheduleReason): void;
   recordPassApplied(): void;
   recordPassDiscarded(reason: ContentRowPassDiscardReason): void;
+  recordSettlementPass(pending: number, deadlines: number): void;
+  recordScrollWrite(): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
   completeWarmUp(at?: number): void;
@@ -106,6 +109,23 @@ export function createRejectReasonCountMap(): Record<ContentRowRejectReason, num
     'bucket-mismatch': 0,
     'fingerprint-mismatch': 0,
     'invalid-height': 0,
+  };
+}
+
+export function createPassScheduleCountMap(): Record<ContentRowPassScheduleReason, number> {
+  return {
+    register: 0,
+    'warm-up': 0,
+    settled: 0,
+    deferred: 0,
+    'pin-release': 0,
+    materialize: 0,
+    'layout-change': 0,
+    conversation: 0,
+    observer: 0,
+    'observer-init': 0,
+    scroll: 0,
+    discard: 0,
   };
 }
 
@@ -300,6 +320,11 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   let discardedPasses = createPassDiscardCountMap();
   let appliedPasses = 0;
   let scheduledPasses = 0;
+  let scheduledByReason = createPassScheduleCountMap();
+  let settlementPasses = 0;
+  let pendingSettlementRows = 0;
+  let settlementDeadlineRows = 0;
+  let scrollWrites = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -362,14 +387,23 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordViewportBypass(count) {
       viewportBudgetBypass += count;
     },
-    recordPassScheduled() {
+    recordPassScheduled(reason) {
       scheduledPasses += 1;
+      scheduledByReason[reason] += 1;
     },
     recordPassApplied() {
       appliedPasses += 1;
     },
     recordPassDiscarded(reason) {
       discardedPasses[reason] += 1;
+    },
+    recordSettlementPass(pending, deadlines) {
+      settlementPasses += 1;
+      pendingSettlementRows = pending;
+      settlementDeadlineRows = deadlines;
+    },
+    recordScrollWrite() {
+      scrollWrites += 1;
     },
     recordOverBudgetCorrection() {
       overBudgetCorrections += 1;
@@ -414,6 +448,11 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         discardedPasses: { ...discardedPasses },
         appliedPasses,
         scheduledPasses,
+        scheduledByReason: { ...scheduledByReason },
+        settlementPasses,
+        pendingSettlementRows,
+        settlementDeadlineRows,
+        scrollWrites,
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -438,6 +477,11 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       discardedPasses = createPassDiscardCountMap();
       appliedPasses = 0;
       scheduledPasses = 0;
+      scheduledByReason = createPassScheduleCountMap();
+      settlementPasses = 0;
+      pendingSettlementRows = 0;
+      settlementDeadlineRows = 0;
+      scrollWrites = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;
