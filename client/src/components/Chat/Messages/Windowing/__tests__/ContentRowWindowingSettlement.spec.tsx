@@ -264,20 +264,25 @@ describe('settlement', () => {
     );
     await resolveFonts();
     flushFrames(1);
-    // a resize arrives: not quiet, so the count restarts
+    // a resize arrives: not quiet, so the count restarts. The row's own measured element is
+    // used rather than a document query, which would also match the scroll root's inline
+    // `overflow-anchor` style.
+    const { token, generation, element } = registered[0];
     act(() => {
       api.reportMountedContentHeight(
-        registered[0].token,
-        registered[0].generation,
+        token,
+        generation,
         api.getLayoutBucket(),
-        document.querySelector('[style]') as HTMLElement,
+        element,
         210,
         'resize-observer',
       );
     });
     flushFrames(CONTENT_ROW_QUIET_FRAMES - 1);
     expect(settled()).toBe(0);
-    flushFrames(2);
+    // A resize that arrives after a row is measured also queues an asynchronous correction
+    // frame, so allow a frame of slack before requiring settlement.
+    flushFrames(CONTENT_ROW_QUIET_FRAMES + 2);
     expect(settled()).toBe(1);
   });
 

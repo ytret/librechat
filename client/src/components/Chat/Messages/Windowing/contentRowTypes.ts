@@ -90,6 +90,8 @@ export type ContentRowPinReason =
   /** §8.1 — the row exceeded the settlement timeout, so it is effectively
    *  always-mounted and must never become a placeholder. */
   | 'settlement-timeout'
+  /** §11.3 — an asynchronous resize needed a correction above the development budget. */
+  | 'async-correction'
   | 'debug';
 
 export type ContentRowMaterializeReason = 'screenshot' | 'find' | 'selection' | 'debug';
@@ -388,6 +390,8 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   mountTransactionDurations: ContentRowValueStats;
   anchorDisplacement: ContentRowValueStats;
   anchorCorrection: ContentRowValueStats;
+  /** Corrections applied for later asynchronous resizes (§11.3), not mount batches. */
+  asyncCorrection: ContentRowValueStats;
   warmUpDurationMs: number | null;
   warmUpComplete: boolean;
 };

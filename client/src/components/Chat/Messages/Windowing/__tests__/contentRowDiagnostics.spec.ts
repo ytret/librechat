@@ -156,6 +156,7 @@ describe('diagnostics collector', () => {
   it('summarizes mount batches, including zero-displacement batches', () => {
     const collector = createContentRowDiagnostics();
     collector.recordMountBatch({
+      id: 1,
       mounts: 4,
       unmounts: 0,
       durationMs: 18,
@@ -163,6 +164,7 @@ describe('diagnostics collector', () => {
       anchorCorrection: 1.5,
     });
     collector.recordMountBatch({
+      id: 2,
       mounts: 0,
       unmounts: 3,
       durationMs: 4,
@@ -242,6 +244,7 @@ describe('diagnostics collector', () => {
     collector.recordPin('focus');
     collector.recordSettleTimeout(detail('row'));
     collector.recordMountBatch({
+      id: 3,
       mounts: 1,
       unmounts: 1,
       durationMs: 1,

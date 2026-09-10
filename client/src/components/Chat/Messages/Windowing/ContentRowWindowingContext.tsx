@@ -23,6 +23,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import {
   createContentRowDiagnostics,
   createLiveDiagnosticsState,
@@ -43,6 +44,8 @@ import type {
   MountedContentRegistration,
 } from './contentRowTypes';
 import {
+  MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX,
+  MIN_ANCHOR_CORRECTION_PX,
   CONTENT_ROW_OVERSCAN_PX,
   CONTENT_ROW_QUIET_FRAMES,
   CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
@@ -145,17 +148,13 @@ export function ContentRowWindowingProvider({
   children,
   scrollRootRef,
   conversationId,
+  pinnedToBottomRef,
   isDevelopment = import.meta.env.DEV,
 }: {
   children: React.ReactNode;
   scrollRootRef: React.RefObject<HTMLElement>;
   conversationId?: string | null;
-  /**
-   * Sticky "user is pinned to the bottom" signal owned by `useMessageScrolling`.
-   * Part of the provider host contract; consumed by the anchor-correction rules in
-   * task 2.6. Declared here so Stage 3 can wire it once and the signature never
-   * changes. Not destructured until it is used, so no dead binding exists.
-   */
+  /** Sticky "user is pinned to the bottom" signal owned by `useMessageScrolling`. */
   pinnedToBottomRef?: React.RefObject<boolean>;
   /** Injectable so tests and production agree on diagnostics installation. */
   isDevelopment?: boolean;
@@ -191,6 +190,11 @@ export function ContentRowWindowingProvider({
   const lastScrollTop = useRef<number | null>(null);
   const lastScrollDirection = useRef(0);
   const scheduleGeometryPass = useRef<() => void>(() => {});
+  /** Frame-coalesced accumulator for asynchronous (resize-driven) corrections (§11.3). */
+  const asyncCorrection = useRef<{ frame?: number; pending: number }>({ pending: 0 });
+  const transitionBatchId = useRef(0);
+  const pinnedToBottomFallbackRef = useRef(false);
+  const pinnedToBottom = pinnedToBottomRef ?? pinnedToBottomFallbackRef;
 
   const currentBucket = useCallback((): LayoutBucket => {
     const bucket = readLayoutBucket(scrollRootRef.current);
@@ -456,6 +460,180 @@ export function ContentRowWindowingProvider({
   }, []);
 
   /**
+   * A later asynchronous resize is not a mount transaction (§11.3). If the changed row is
+   * wholly above the viewport and the reader is not bottom-pinned or elastically
+   * overscrolled, the offset error introduced by the change is corrected once per frame.
+   *
+   * The correction is the height delta of the changed row, which is exactly the amount
+   * everything below it moved by. A delta above
+   * `MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX` is a development failure: the row is demoted
+   * to always-mounted so the same geometry is never turned into a placeholder again.
+   */
+  const scheduleAsyncCorrection = useCallback(
+    (record: ContentRowRecord, delta: number) => {
+      if (Math.abs(delta) < MIN_ANCHOR_CORRECTION_PX) {
+        return;
+      }
+      const root = scrollRootRef.current;
+      if (!root || pinnedToBottom.current) {
+        return;
+      }
+      const rootRect = root.getBoundingClientRect();
+      const shellRect = record.shellElement?.getBoundingClientRect();
+      if (!shellRect || shellRect.bottom > rootRect.top) {
+        // Only content wholly above the viewport can displace what the reader is looking at.
+        return;
+      }
+      asyncCorrection.current.pending += delta;
+      if (asyncCorrection.current.frame != null) {
+        return;
+      }
+      asyncCorrection.current.frame = requestAnimationFrame(() => {
+        asyncCorrection.current.frame = undefined;
+        const target = scrollRootRef.current;
+        const amount = asyncCorrection.current.pending;
+        asyncCorrection.current.pending = 0;
+        if (!target || Math.abs(amount) < MIN_ANCHOR_CORRECTION_PX) {
+          return;
+        }
+        const max = target.scrollHeight - target.clientHeight;
+        if (target.scrollTop < 0 || target.scrollTop > max) {
+          // §11.4 — never fight an elastic overscroll.
+          return;
+        }
+        target.scrollTop += amount;
+        diagnostics.current.recordAsyncCorrection(amount);
+        if (Math.abs(amount) > MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX) {
+          diagnostics.current.recordOverBudgetCorrection();
+          record.policy = 'always-mounted';
+          record.pinnedByPolicy = 'async-correction';
+        }
+      });
+    },
+    [pinnedToBottom, scrollRootRef],
+  );
+
+  /**
+   * Apply one mount/unmount batch as a single transition (§11.1).
+   *
+   * Every geometry read happens before any write, all row state setters run inside one
+   * `flushSync` so the generation-specific layout effects register and measure before the
+   * flush returns, and the anchor is re-read afterwards to compute at most one correction
+   * write.
+   */
+  const applyTransitionBatch = useCallback(
+    (batch: {
+      mounts: ContentRowRecord[];
+      unmounts: ContentRowRecord[];
+      /** Rectangles read during classification, keyed by token. */
+      rects: Map<ContentRowToken, { top: number; bottom: number }>;
+    }) => {
+      if (batch.mounts.length === 0 && batch.unmounts.length === 0) {
+        // Nothing eligible this pass: no flushSync, no geometry reads, no write.
+        return { mounts: 0, unmounts: 0, displacement: 0, correction: 0 };
+      }
+      const root = scrollRootRef.current;
+      const rootRect = root?.getBoundingClientRect();
+      const transitionTokens = new Set(
+        [...batch.mounts, ...batch.unmounts].map((record) => record.token),
+      );
+
+      // 1-2. Choose an anchor outside the transition set, using rectangles already read.
+      let anchorElement: HTMLElement | null = null;
+      let anchorTopBefore: number | null = null;
+      if (root && rootRect) {
+        for (const record of rows.current.values()) {
+          if (transitionTokens.has(record.token)) {
+            continue;
+          }
+          const element = record.shellElement;
+          if (!element?.isConnected) {
+            continue;
+          }
+          const rect = batch.rects.get(record.token) ?? element.getBoundingClientRect();
+          if (rect.bottom > rootRect.top && rect.top < rootRect.bottom) {
+            anchorElement = element;
+            anchorTopBefore = rect.top;
+            break;
+          }
+        }
+        if (!anchorElement) {
+          // Fall back to the containing message shell of any connected row.
+          const fallback = [...rows.current.values()]
+            .map((record) => record.shellElement?.closest<HTMLElement>('.message-render') ?? null)
+            .find((element) => element?.isConnected);
+          anchorElement = fallback ?? null;
+          anchorTopBefore = anchorElement?.getBoundingClientRect().top ?? null;
+        }
+      }
+
+      const pinned = pinnedToBottom.current;
+      const scrollBefore = root ? root.scrollTop : null;
+      const startedAt = performanceNow();
+      let mounts = 0;
+      let unmounts = 0;
+
+      // 3-4. One flushSync for the whole batch; layout effects measure inside it.
+      flushSync(() => {
+        batch.mounts.forEach((record) => {
+          if (mountRow(record)) {
+            mounts += 1;
+          }
+        });
+        batch.unmounts.forEach((record) => {
+          if (unmountRow(record)) {
+            unmounts += 1;
+          }
+        });
+      });
+      const durationMs = performanceNow() - startedAt;
+
+      if (mounts === 0 && unmounts === 0) {
+        return { mounts, unmounts, displacement: 0, correction: 0 };
+      }
+
+      // 5-8. Re-read the same anchor and perform at most one correction write.
+      let displacement = 0;
+      let correction = 0;
+      if (root && scrollBefore != null) {
+        const max = root.scrollHeight - root.clientHeight;
+        const elastic = scrollBefore < 0 || scrollBefore > max;
+        // A batch is abandoned without correction when its anchor disconnected.
+        if (!elastic && (!anchorElement || anchorElement.isConnected)) {
+          if (pinned) {
+            // Bottom-pinned: preserve the bottom, never also run top-anchor correction.
+            const target = Math.max(0, max);
+            if (Math.abs(target - scrollBefore) >= MIN_ANCHOR_CORRECTION_PX) {
+              root.scrollTop = target;
+            }
+          } else if (anchorElement && anchorTopBefore != null) {
+            displacement = anchorElement.getBoundingClientRect().top - anchorTopBefore;
+            if (Math.abs(displacement) >= MIN_ANCHOR_CORRECTION_PX) {
+              root.scrollTop += displacement;
+            }
+          }
+        }
+        correction = root.scrollTop - scrollBefore;
+      }
+
+      if (Math.abs(correction) > MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX) {
+        diagnostics.current.recordOverBudgetCorrection();
+      }
+
+      diagnostics.current.recordMountBatch({
+        id: (transitionBatchId.current += 1),
+        mounts,
+        unmounts,
+        durationMs,
+        anchorDisplacement: displacement,
+        anchorCorrection: correction,
+      });
+      return { mounts, unmounts, displacement, correction };
+    },
+    [mountRow, pinnedToBottom, scrollRootRef, unmountRow],
+  );
+
+  /**
    * One geometry pass (§10). Reads every rectangle before writing any mount state, so a
    * write cannot invalidate a later measurement in the same pass.
    */
@@ -484,7 +662,6 @@ export function ContentRowWindowingProvider({
       }
 
       const rootRect = root.getBoundingClientRect();
-      const startedAt = performanceNow();
       const direction = lastScrollDirection.current;
 
       type Candidate = {
@@ -496,6 +673,8 @@ export function ContentRowWindowingProvider({
 
       const mountCandidates: Candidate[] = [];
       const unmountCandidates: Array<{ record: ContentRowRecord; distance: number }> = [];
+      /** Every rectangle read in this pass, reused for anchor selection (§11.1 step 2). */
+      const rects = new Map<ContentRowToken, { top: number; bottom: number }>();
 
       // Batch-read every candidate rectangle before any write.
       rows.current.forEach((record) => {
@@ -504,6 +683,7 @@ export function ContentRowWindowingProvider({
           return;
         }
         const rect = element.getBoundingClientRect();
+        rects.set(record.token, { top: rect.top, bottom: rect.bottom });
         const inViewport = rect.bottom > rootRect.top && rect.top < rootRect.bottom;
         const near =
           rect.bottom >= rootRect.top - CONTENT_ROW_OVERSCAN_PX &&
@@ -558,32 +738,17 @@ export function ContentRowWindowingProvider({
         diagnostics.current.recordViewportBypass(viewportMounts.length);
       }
 
-      let mounts = 0;
-      [...viewportMounts, ...budgetedMounts].forEach((candidate) => {
-        if (mountRow(candidate.record)) {
-          mounts += 1;
-        }
-      });
-
-      // §10 step 6 — unmounting happens in a separate batch after all mount work.
+      // §10 step 6 — unmount candidates are collected first but applied in a separate,
+      // later phase of the same batch: all mount work happens before any unmount work.
       unmountCandidates.sort((a, b) => b.distance - a.distance);
-      let unmounts = 0;
-      unmountCandidates.slice(0, MAX_UNMOUNTS_PER_FRAME).forEach((candidate) => {
-        if (unmountRow(candidate.record)) {
-          unmounts += 1;
-        }
-      });
 
-      if (mounts > 0 || unmounts > 0) {
-        diagnostics.current.recordMountBatch({
-          mounts,
-          unmounts,
-          durationMs: performanceNow() - startedAt,
-          // Anchor measurement and correction belong to the transition transaction (2.6).
-          anchorDisplacement: 0,
-          anchorCorrection: 0,
-        });
-      }
+      const { mounts, unmounts } = applyTransitionBatch({
+        mounts: [...viewportMounts, ...budgetedMounts].map((candidate) => candidate.record),
+        unmounts: unmountCandidates
+          .slice(0, MAX_UNMOUNTS_PER_FRAME)
+          .map((candidate) => candidate.record),
+        rects,
+      });
 
       // §11.1 step 9 — work that exceeded a budget is continued in a later frame. Only
       // reschedule when this pass made progress, so a candidate that cannot be applied can
@@ -595,7 +760,7 @@ export function ContentRowWindowingProvider({
         scheduleGeometryPass.current();
       }
     },
-    [currentBucket, mountRow, scrollRootRef, unmountRow],
+    [applyTransitionBatch, currentBucket, scrollRootRef],
   );
 
   scheduleGeometryPass.current = () => {
@@ -805,17 +970,21 @@ export function ContentRowWindowingProvider({
         diagnostics.current.recordStaleMeasurementAccepted();
       }
       // §12: the browser value is retained for placeholders; rounding is diagnostics only.
+      const previousHeight = record.measuredHeight;
       record.measuredHeight = height;
       record.settled = false;
       record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
       diagnostics.current.recordAcceptedMeasurement(source);
       // §8.1 step 4 — the row settles after this measurement plus two quiet frames; any
       // further resize restarts the count, so "quiet" means "no resize in between".
+      if (source === 'resize-observer' && previousHeight != null) {
+        scheduleAsyncCorrection(record, height - previousHeight);
+      }
       pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
       scheduleSettlementLoop.current();
       releaseMeasurementWaiters(record);
     },
-    [releaseMeasurementWaiters],
+    [releaseMeasurementWaiters, scheduleAsyncCorrection],
   );
 
   /**
@@ -1026,6 +1195,7 @@ export function ContentRowWindowingProvider({
   useEffect(() => {
     const root = scrollRootRef.current;
     const loop = geometryLoop.current;
+    const asyncCorrectionState = asyncCorrection.current;
     const teardown = () => {
       if (loop.frame != null) {
         cancelAnimationFrame(loop.frame);
@@ -1063,13 +1233,23 @@ export function ContentRowWindowingProvider({
       lastScrollTop.current = top;
       scheduleGeometryPass.current();
     };
+    // §11.4 — while this provider owns correction, native anchoring must not also run.
+    const previousOverflowAnchor = root.style.overflowAnchor;
+    root.style.overflowAnchor = 'none';
+
     root.addEventListener('scroll', onScroll, { passive: true });
     scheduleGeometryPass.current();
     return () => {
+      root.style.overflowAnchor = previousOverflowAnchor;
       root.removeEventListener('scroll', onScroll);
       observer?.disconnect();
       intersectionObserver.current = undefined;
       teardown();
+      if (asyncCorrectionState.frame != null) {
+        cancelAnimationFrame(asyncCorrectionState.frame);
+        asyncCorrectionState.frame = undefined;
+      }
+      asyncCorrectionState.pending = 0;
     };
   }, [conversationId, scrollRootRef]);
 

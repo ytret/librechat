@@ -36,6 +36,8 @@ import {
 export const CONTENT_ROW_DIAGNOSTICS_GLOBAL_KEY = '__lcContentRows';
 
 export type ContentRowMountBatchDiagnostics = {
+  /** Transition batch id, so a recorded batch can be matched to a trace. */
+  id: number;
   mounts: number;
   unmounts: number;
   durationMs: number;
@@ -58,6 +60,7 @@ export type ContentRowDiagnosticsCollector = {
   recordReadinessTimeout(detail: ContentRowTimeoutDetail): void;
   recordMaterializeTimeout(reason: ContentRowMaterializeReason): void;
   recordMountBatch(batch: ContentRowMountBatchDiagnostics): void;
+  recordAsyncCorrection(correction: number): void;
   recordViewportBypass(count: number): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
@@ -116,6 +119,7 @@ export function createPinReasonCountMap(): Record<ContentRowPinReason, number> {
     latest: 0,
     submitting: 0,
     'settlement-timeout': 0,
+    'async-correction': 0,
     debug: 0,
   };
 }
@@ -284,6 +288,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   const mountTransactionDurations: number[] = [];
   const anchorDisplacements: number[] = [];
   const anchorCorrections: number[] = [];
+  const asyncCorrections: number[] = [];
 
   return {
     recordRegistration(count = 1) {
@@ -331,6 +336,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       anchorDisplacements.push(batch.anchorDisplacement);
       anchorCorrections.push(batch.anchorCorrection);
     },
+    recordAsyncCorrection(correction) {
+      asyncCorrections.push(correction);
+    },
     recordViewportBypass(count) {
       viewportBudgetBypass += count;
     },
@@ -373,6 +381,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         mountTransactionDurations: summarizeValues(mountTransactionDurations),
         anchorDisplacement: summarizeValues(anchorDisplacements),
         anchorCorrection: summarizeValues(anchorCorrections),
+        asyncCorrection: summarizeValues(asyncCorrections),
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -402,6 +411,7 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       mountTransactionDurations.length = 0;
       anchorDisplacements.length = 0;
       anchorCorrections.length = 0;
+      asyncCorrections.length = 0;
     },
   };
 }

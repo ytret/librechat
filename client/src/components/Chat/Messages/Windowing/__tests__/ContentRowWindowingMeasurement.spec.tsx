@@ -18,12 +18,15 @@ class MockResizeObserver {
   unobserve = jest.fn((target: Element) => {
     this.observed = this.observed.filter((element) => element !== target);
   });
+
   disconnect = jest.fn(() => {
     this.observed = [];
   });
+
   observe = jest.fn((target: Element) => {
     this.observed.push(target);
   });
+
   constructor(public callback: ResizeObserverCallback) {
     MockResizeObserver.instances.push(this);
   }
@@ -584,7 +587,7 @@ describe('measured element lifecycle', () => {
   });
 
   it('treats a bucket change reported with the element as an invalidation', () => {
-    const { rerender } = render(
+    render(
       <Harness>
         <MeasuredRow messageId="m1" reportLayoutEffect={false} />
       </Harness>,
