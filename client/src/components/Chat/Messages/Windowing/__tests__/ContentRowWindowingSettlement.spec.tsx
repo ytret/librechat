@@ -617,6 +617,24 @@ describe('a row that keeps changing size', () => {
     }
   };
 
+  it('charges exactly one settlement attempt per mount window', async () => {
+    // Regression: the mount armed a budget AND the measured element registering immediately
+    // afterwards armed a second one, so every ordinary mount spent two of the three attempts.
+    // With enough scrolling a row exceeded the cap and was demoted, disabling windowing.
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    flushFrames(CONTENT_ROW_QUIET_FRAMES + 1);
+    expect(settled()).toBe(1);
+    const attempts = api.getDiagnostics().attemptsBySource;
+    expect(attempts.mount + attempts.register).toBe(1);
+    expect(attempts.content).toBe(0);
+    expect(api.getDiagnostics().settlementTimeouts).toBe(0);
+  });
+
   it('demotes a row that settles in the gaps between resizes, and then goes idle', async () => {
     render(
       <Harness>

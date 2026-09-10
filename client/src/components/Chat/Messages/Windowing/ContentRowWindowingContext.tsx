@@ -844,11 +844,7 @@ export function ContentRowWindowingProvider({
         }
       });
 
-      if (rows.current.size > 0 && mountedRowsInViewport === 0) {
-        // Every registered row is a placeholder while the reader is looking at the viewport:
-        // this is the empty-background case the fling test forbids (§10, §22.1).
-        diagnostics.current.recordBlankViewportPass(lastScrollDelta.current);
-      }
+      const passedWithEmptyViewport = rows.current.size > 0 && mountedRowsInViewport === 0;
 
       // §10 step 4 — visible rows first, then rows ahead in the travel direction, then by
       // distance. Rows inside the viewport bypass the ordinary mount budget and are counted.
@@ -890,6 +886,14 @@ export function ContentRowWindowingProvider({
         unmountCandidates.length - unmounts > 0;
       if (deferredWork && (mounts > 0 || unmounts > 0)) {
         scheduleGeometryPass.current('deferred');
+      }
+
+      // Measured AFTER the transaction. A pass that found the viewport empty but mounted the
+      // visible rows has fixed the blankness before the browser paints, so the reader never sees
+      // it. Counting the pre-transaction state recorded those repairs as failures. What actually
+      // reaches the screen is: the viewport was empty AND this pass did not fill it.
+      if (passedWithEmptyViewport && mounts === 0) {
+        diagnostics.current.recordBlankViewportPass(lastScrollDelta.current);
       }
     },
     [applyTransitionBatch, currentBucket, effectiveLeadPx, scrollRootRef],
@@ -1189,7 +1193,13 @@ export function ContentRowWindowingProvider({
         record.settled = false;
         record.mountState = 'MOUNTED_UNMEASURED';
         pendingSettlements.current.delete(record.token);
-        beginMeasurementWork(record, 'content');
+        // Only arm a budget when none is in flight. A remount already armed one for this window,
+        // and the measured element registering immediately afterwards is part of that same
+        // mount, not a second settlement attempt. Charging both halved the effective attempt
+        // budget and demoted rows during ordinary scrolling.
+        if (!settlementDeadlines.current.has(record.token)) {
+          beginMeasurementWork(record, 'content');
+        }
       }
       record.measuredElement = registration.element;
       mountedElements.current.set(registration.element, {
