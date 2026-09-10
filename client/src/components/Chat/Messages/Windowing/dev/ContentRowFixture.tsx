@@ -198,6 +198,7 @@ const METRICS: Array<[string, (snapshot: ContentRowDiagnosticsSnapshot) => React
   ['warm-up complete', (s) => String(s.warmUpComplete)],
   ['bucket', (s) => s.layoutBucket ?? '—'],
   ['reflow', (s) => s.reflowState],
+  ['materialized', (s) => String(s.mountedRows === s.registeredRows && s.registeredRows > 0)],
   ['mounts/frame max', (s) => s.mountCountsPerFrame.max],
   ['unmounts/frame max', (s) => s.unmountCountsPerFrame.max],
   ['max displacement px', (s) => s.anchorDisplacement.max],
@@ -219,6 +220,8 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
   const [alwaysMounted, setAlwaysMounted] = useState<ReadonlySet<string>>(new Set());
   const [snapshot, setSnapshot] = useState<ContentRowDiagnosticsSnapshot | null>(null);
   const [domCount, setDomCount] = useState(0);
+  const [materialized, setMaterialized] = useState(false);
+  const restoreRef = useRef<(() => void) | null>(null);
 
   const rows = useMemo(() => buildRows(rowCount, seed), [rowCount, seed]);
 
@@ -244,11 +247,76 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
 
   const remountStress = useCallback(() => setSeed((value) => value + 1), []);
 
+  /** Mount every row and hold it there until released, so the state is observable. */
   const materialize = useCallback(async () => {
+    if (restoreRef.current) {
+      return;
+    }
     const restore = await windowing.materializeAll('debug');
-    restore();
+    restoreRef.current = restore;
+    setMaterialized(true);
     refresh();
   }, [refresh, windowing]);
+
+  const release = useCallback(() => {
+    restoreRef.current?.();
+    restoreRef.current = null;
+    setMaterialized(false);
+    refresh();
+  }, [refresh]);
+
+  /** Native find must see the text before the browser's own search runs. */
+  const simulateFind = useCallback(() => {
+    windowing.materializeAllSync('find');
+    setMaterialized(true);
+    refresh();
+  }, [refresh, windowing]);
+
+  /**
+   * Development-only console handle, so the acceptance checks are one-liners:
+   *
+   *   __lcRows.materialize()   mount everything and hold
+   *   __lcRows.release()       restore normal windowing
+   *   __lcRows.find()          synchronously materialize, as Cmd/Ctrl+F does
+   *   __lcRows.rowCount()      current row/shell counts
+   */
+  useEffect(() => {
+    const handle = {
+      materialize,
+      release,
+      find: simulateFind,
+      rowCount: () => ({
+        virtualRows: document.querySelectorAll('[data-content-virtual-row="true"]').length,
+        mounted: document.querySelectorAll(
+          '[data-content-virtual-row="true"][data-content-mounted="true"]',
+        ).length,
+        placeholders: document.querySelectorAll(
+          '[data-content-virtual-row="true"][data-content-mounted="false"]',
+        ).length,
+        descendantsInsidePlaceholders: [
+          ...document.querySelectorAll(
+            '[data-content-virtual-row="true"][data-content-mounted="false"]',
+          ),
+        ].reduce((total, element) => total + element.getElementsByTagName('*').length, 0),
+        totalElements: document.getElementsByTagName('*').length,
+      }),
+    };
+    (window as unknown as { __lcRows?: unknown }).__lcRows = handle;
+    return () => {
+      (window as unknown as { __lcRows?: unknown }).__lcRows = undefined;
+    };
+  }, [materialize, release, simulateFind]);
+
+  /** Real Cmd/Ctrl+F, mirroring the §20.7.8 contract in the fixture. */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        simulateFind();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [simulateFind]);
 
   return (
     <div className="flex h-screen w-full" style={{ background: '#0b1220', color: '#e5e7eb' }}>
@@ -284,8 +352,15 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
           <button type="button" data-testid="remount-stress" onClick={remountStress}>
             remount stress
           </button>
-          <button type="button" data-testid="materialize" onClick={materialize}>
-            materializeAll
+          <button
+            type="button"
+            data-testid="materialize"
+            onClick={materialized ? release : materialize}
+          >
+            {materialized ? 'release' : 'materializeAll (hold)'}
+          </button>
+          <button type="button" data-testid="simulate-find" onClick={simulateFind}>
+            simulate Cmd+F
           </button>
           <button type="button" onClick={() => scrollRef.current?.scrollTo({ top: 0 })}>
             jump top
