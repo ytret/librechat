@@ -42,7 +42,14 @@ import type {
   MessageScopeToken,
   MountedContentRegistration,
 } from './contentRowTypes';
-import { CONTENT_ROW_QUIET_FRAMES, CONTENT_ROW_SETTLEMENT_TIMEOUT_MS } from './contentRowTypes';
+import {
+  CONTENT_ROW_OVERSCAN_PX,
+  CONTENT_ROW_QUIET_FRAMES,
+  CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
+  CONTENT_ROW_UNMOUNT_HYSTERESIS_PX,
+  MAX_MOUNTS_PER_FRAME,
+  MAX_UNMOUNTS_PER_FRAME,
+} from './contentRowTypes';
 
 /** Observer mapping for a mounted content element (§7.4). */
 export type MountedElementMapping = {
@@ -174,6 +181,16 @@ export function ContentRowWindowingProvider({
    */
   const settlementLoop = useRef<{ frame?: number }>({});
   const scheduleSettlementLoop = useRef<() => void>(() => {});
+  const intersectionObserver = useRef<IntersectionObserver | undefined>(undefined);
+  const geometryLoop = useRef<{ frame?: number }>({});
+  const geometryPassId = useRef(0);
+  /** Bumped on every conversation change so queued decisions cannot outlive it. */
+  const conversationEpoch = useRef(0);
+  /** Bumped when the scroll direction changes; queued priority decisions are stale then. */
+  const directionEpoch = useRef(0);
+  const lastScrollTop = useRef<number | null>(null);
+  const lastScrollDirection = useRef(0);
+  const scheduleGeometryPass = useRef<() => void>(() => {});
 
   const currentBucket = useCallback((): LayoutBucket => {
     const bucket = readLayoutBucket(scrollRootRef.current);
@@ -389,6 +406,215 @@ export function ContentRowWindowingProvider({
     [],
   );
 
+  /** A row that must always be mounted regardless of distance. */
+  const mustBeMounted = (record: ContentRowRecord): boolean =>
+    record.forceMounted ||
+    record.pins.size > 0 ||
+    record.pinnedByPolicy != null ||
+    record.policy !== 'windowed';
+
+  /**
+   * Remount a placeholder (§8.3). The generation is incremented so the row renders a new
+   * generation-specific measured element; the row keeps its fixed cached shell height
+   * during the update and removes it in the same commit that real content lands.
+   */
+  const mountRow = useCallback(
+    (record: ContentRowRecord): boolean => {
+      if (record.mounted) {
+        return false;
+      }
+      record.generation = nextGeneration(record.generation);
+      record.mounted = true;
+      record.committedMounted = true;
+      record.measuredFingerprint = record.fingerprint;
+      record.measuredElement = null;
+      record.settled = false;
+      record.mountState = 'MOUNTED_UNMEASURED';
+      pendingSettlements.current.delete(record.token);
+      beginMeasurementWork(record);
+      record.setMounted(true, record.generation);
+      return true;
+    },
+    [beginMeasurementWork],
+  );
+
+  /**
+   * Turn a settled row into an exact-height placeholder. The height handed to the row is
+   * the last accepted border-box height for the current bucket — never an estimate, never
+   * a capped value (§6 #4, §24).
+   */
+  const unmountRow = useCallback((record: ContentRowRecord): boolean => {
+    if (!record.mounted || !canRowUnmount(record)) {
+      return false;
+    }
+    const height = record.measuredHeight;
+    record.mounted = false;
+    record.committedMounted = false;
+    record.mountState = 'PLACEHOLDER_MEASURED';
+    record.setMounted(false, record.generation, height);
+    return true;
+  }, []);
+
+  /**
+   * One geometry pass (§10). Reads every rectangle before writing any mount state, so a
+   * write cannot invalidate a later measurement in the same pass.
+   */
+  const runGeometryPass = useCallback(
+    (pass: {
+      id: number;
+      conversationEpoch: number;
+      directionEpoch: number;
+      layoutBucket: LayoutBucket;
+    }) => {
+      const root = scrollRootRef.current;
+      if (!root) {
+        return;
+      }
+      // §10 step 7 — discard queued decisions when the conversation, layout bucket, or
+      // travel direction changed after this pass was scheduled, then schedule a fresh
+      // pass so the change is not lost.
+      const bucket = currentBucket();
+      if (
+        pass.conversationEpoch !== conversationEpoch.current ||
+        pass.directionEpoch !== directionEpoch.current ||
+        pass.layoutBucket !== bucket
+      ) {
+        scheduleGeometryPass.current();
+        return;
+      }
+
+      const rootRect = root.getBoundingClientRect();
+      const startedAt = performanceNow();
+      const direction = lastScrollDirection.current;
+
+      type Candidate = {
+        record: ContentRowRecord;
+        inViewport: boolean;
+        aheadInTravel: boolean;
+        distance: number;
+      };
+
+      const mountCandidates: Candidate[] = [];
+      const unmountCandidates: Array<{ record: ContentRowRecord; distance: number }> = [];
+
+      // Batch-read every candidate rectangle before any write.
+      rows.current.forEach((record) => {
+        const element = record.shellElement;
+        if (!element) {
+          return;
+        }
+        const rect = element.getBoundingClientRect();
+        const inViewport = rect.bottom > rootRect.top && rect.top < rootRect.bottom;
+        const near =
+          rect.bottom >= rootRect.top - CONTENT_ROW_OVERSCAN_PX &&
+          rect.top <= rootRect.bottom + CONTENT_ROW_OVERSCAN_PX;
+        const far =
+          rect.bottom < rootRect.top - CONTENT_ROW_UNMOUNT_HYSTERESIS_PX ||
+          rect.top > rootRect.bottom + CONTENT_ROW_UNMOUNT_HYSTERESIS_PX;
+
+        if (!record.mounted && (near || mustBeMounted(record))) {
+          let aheadInTravel = true;
+          if (direction > 0) {
+            aheadInTravel = rect.top >= rootRect.top;
+          } else if (direction < 0) {
+            aheadInTravel = rect.bottom <= rootRect.bottom;
+          }
+          const distance =
+            direction < 0
+              ? Math.max(0, rootRect.top - rect.bottom)
+              : Math.max(0, rect.top - rootRect.bottom);
+          mountCandidates.push({ record, inViewport, aheadInTravel, distance });
+          return;
+        }
+
+        // §10 step 3 — everything ineligible was discarded by canRowUnmount, which also
+        // enforces the hysteresis: a far row that is only just outside the unmount band is
+        // retained, so mount/unmount cannot flap at the boundary.
+        if (far && canRowUnmount(record)) {
+          unmountCandidates.push({
+            record,
+            distance: Math.max(rect.bottom - rootRect.bottom, rootRect.top - rect.top),
+          });
+        }
+      });
+
+      // §10 step 4 — visible rows first, then rows ahead in the travel direction, then by
+      // distance. Rows inside the viewport bypass the ordinary mount budget and are counted.
+      mountCandidates.sort((a, b) => {
+        if (a.inViewport !== b.inViewport) {
+          return a.inViewport ? -1 : 1;
+        }
+        if (a.aheadInTravel !== b.aheadInTravel) {
+          return a.aheadInTravel ? -1 : 1;
+        }
+        return a.distance - b.distance;
+      });
+
+      const viewportMounts = mountCandidates.filter((candidate) => candidate.inViewport);
+      const budgetedMounts = mountCandidates
+        .filter((candidate) => !candidate.inViewport)
+        .slice(0, MAX_MOUNTS_PER_FRAME);
+      if (viewportMounts.length > 0) {
+        diagnostics.current.recordViewportBypass(viewportMounts.length);
+      }
+
+      let mounts = 0;
+      [...viewportMounts, ...budgetedMounts].forEach((candidate) => {
+        if (mountRow(candidate.record)) {
+          mounts += 1;
+        }
+      });
+
+      // §10 step 6 — unmounting happens in a separate batch after all mount work.
+      unmountCandidates.sort((a, b) => b.distance - a.distance);
+      let unmounts = 0;
+      unmountCandidates.slice(0, MAX_UNMOUNTS_PER_FRAME).forEach((candidate) => {
+        if (unmountRow(candidate.record)) {
+          unmounts += 1;
+        }
+      });
+
+      if (mounts > 0 || unmounts > 0) {
+        diagnostics.current.recordMountBatch({
+          mounts,
+          unmounts,
+          durationMs: performanceNow() - startedAt,
+          // Anchor measurement and correction belong to the transition transaction (2.6).
+          anchorDisplacement: 0,
+          anchorCorrection: 0,
+        });
+      }
+
+      // §11.1 step 9 — work that exceeded a budget is continued in a later frame. Only
+      // reschedule when this pass made progress, so a candidate that cannot be applied can
+      // never spin the loop.
+      const deferredWork =
+        mountCandidates.length - (viewportMounts.length + budgetedMounts.length) > 0 ||
+        unmountCandidates.length - unmounts > 0;
+      if (deferredWork && (mounts > 0 || unmounts > 0)) {
+        scheduleGeometryPass.current();
+      }
+    },
+    [currentBucket, mountRow, scrollRootRef, unmountRow],
+  );
+
+  scheduleGeometryPass.current = () => {
+    const loop = geometryLoop.current;
+    if (loop.frame != null) {
+      return;
+    }
+    const pass = {
+      id: (geometryPassId.current += 1),
+      conversationEpoch: conversationEpoch.current,
+      directionEpoch: directionEpoch.current,
+      layoutBucket: currentBucket(),
+    };
+    loop.frame = requestAnimationFrame(() => {
+      loop.frame = undefined;
+      runGeometryPass(pass);
+    });
+  };
+
   /**
    * Drop the measurement in hand without touching mount state. §13's opening rule:
    * an invalid measurement must never survive as a placeholder height, and §12
@@ -492,9 +718,14 @@ export function ContentRowWindowingProvider({
       // §8.1 — every newly registered row starts mounted and begins its measurement and
       // settlement budget immediately, never as an estimated placeholder.
       beginMeasurementWork(record);
+      if (record.shellElement) {
+        intersectionObserver.current?.observe(record.shellElement);
+      }
+      scheduleGeometryPass.current();
       return () => {
         pendingSettlements.current.delete(record.token);
         settlementDeadlines.current.delete(record.token);
+        intersectionObserver.current?.unobserve(record.shellElement as Element);
         unregisterRow(record);
         maybeCompleteWarmUp();
       };
@@ -785,6 +1016,63 @@ export function ContentRowWindowingProvider({
     };
   }, [maybeCompleteWarmUp]);
 
+  /**
+   * One provider-level intersection observer over persistent row shells (§20.2.1) and one
+   * scroll listener that schedules at most one geometry pass per frame (§10).
+   *
+   * The observer's entries are deliberately ignored: the geometry pass re-reads every
+   * rectangle it needs in one batch, so an entry is only a signal that something changed.
+   */
+  useEffect(() => {
+    const root = scrollRootRef.current;
+    const loop = geometryLoop.current;
+    const teardown = () => {
+      if (loop.frame != null) {
+        cancelAnimationFrame(loop.frame);
+        loop.frame = undefined;
+      }
+    };
+    if (!root) {
+      return teardown;
+    }
+    let observer: IntersectionObserver | undefined;
+    if (typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(() => scheduleGeometryPass.current(), {
+        root,
+        rootMargin: `${CONTENT_ROW_OVERSCAN_PX}px 0px`,
+        threshold: 0,
+      });
+      intersectionObserver.current = observer;
+      rows.current.forEach((record) => {
+        if (record.shellElement) {
+          observer?.observe(record.shellElement);
+        }
+      });
+    }
+    const onScroll = () => {
+      const top = root.scrollTop;
+      const previous = lastScrollTop.current;
+      if (previous != null && top !== previous) {
+        const direction = top > previous ? 1 : -1;
+        if (direction !== lastScrollDirection.current) {
+          lastScrollDirection.current = direction;
+          // §10 step 7 — a direction change invalidates queued priority decisions.
+          directionEpoch.current += 1;
+        }
+      }
+      lastScrollTop.current = top;
+      scheduleGeometryPass.current();
+    };
+    root.addEventListener('scroll', onScroll, { passive: true });
+    scheduleGeometryPass.current();
+    return () => {
+      root.removeEventListener('scroll', onScroll);
+      observer?.disconnect();
+      intersectionObserver.current = undefined;
+      teardown();
+    };
+  }, [conversationId, scrollRootRef]);
+
   // Development-only console handle (§23). Production installs nothing.
   useEffect(() => {
     return installContentRowDiagnostics(diagnostics.current, {
@@ -807,7 +1095,9 @@ export function ContentRowWindowingProvider({
     conversationRef.current = conversationId ?? null;
     // A new conversation starts a fresh warm-up phase (§8.1).
     warmUpComplete.current = false;
+    conversationEpoch.current += 1;
     diagnostics.current.startWarmUp();
+    scheduleGeometryPass.current();
     rows.current.forEach((record) => {
       if (record.conversationId === conversationRef.current) {
         return;
