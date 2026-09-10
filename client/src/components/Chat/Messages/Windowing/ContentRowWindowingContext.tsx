@@ -500,6 +500,12 @@ export function ContentRowWindowingProvider({
       record.measuredFingerprint = record.fingerprint;
       record.measuredElement = null;
       record.settled = false;
+      // A remount is a fresh settlement problem. The attempt budget bounds churn WITHIN one
+      // mounted window, not the number of times a row is legitimately remounted while the
+      // reader scrolls: without this reset, each remount spends an attempt and every row is
+      // eventually demoted, which silently disables windowing altogether.
+      record.settlementAttempts = 0;
+      record.settlementStartedAt = null;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
       beginMeasurementWork(record);

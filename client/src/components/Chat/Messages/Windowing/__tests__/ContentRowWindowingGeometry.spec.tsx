@@ -469,6 +469,36 @@ describe('unmount budget and hysteresis', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('unmount eligibility in the geometry pass', () => {
+  it("does not exhaust a row's settlement budget across repeated remounts", () => {
+    // Regression: the attempt budget must bound churn WITHIN a mounted window. If a remount
+    // spends an attempt, scrolling far enough demotes every row and windowing silently
+    // disables itself — which is exactly what the browser gate showed (80 of 80 demoted).
+    render(<Harness>{manyRows(1)}</Harness>);
+    for (let cycle = 0; cycle < 8; cycle++) {
+      settleAll();
+      // unmount: far beyond the hysteresis band
+      setRowRect('m0', { top: -6000, bottom: -5900 });
+      scrollBy(5);
+      flushFrames(2);
+      expect(isMounted('m0')).toBe(false);
+
+      // remount: back into the viewport
+      setRowRect('m0', { top: 100, bottom: 200 });
+      scrollBy(5);
+      flushFrames(2);
+      expect(isMounted('m0')).toBe(true);
+    }
+    const snapshot = api.getDiagnostics();
+    expect(snapshot.settlementTimeouts).toBe(0);
+    expect(snapshot.alwaysMountedRows).toBe(0);
+    // and it can still be windowed after all that
+    settleAll();
+    setRowRect('m0', { top: -6000, bottom: -5900 });
+    scrollBy(5);
+    flushFrames(2);
+    expect(isMounted('m0')).toBe(false);
+  });
+
   it('keeps a row mounted while an asynchronous renderer is still pending', async () => {
     let release!: () => void;
     const readiness = new Promise<void>((resolve) => {
