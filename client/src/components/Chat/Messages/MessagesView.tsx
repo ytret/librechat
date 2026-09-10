@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
@@ -7,7 +7,6 @@ import type { TMessage } from 'librechat-data-provider';
 import { useScreenshot, useMessageScrolling, useLocalize } from '~/hooks';
 import ScrollToBottom from '~/components/Messages/ScrollToBottom';
 import { MessagesViewProvider } from '~/Providers';
-import { MessageWindowingProvider, useMessageWindowing } from './Windowing';
 import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
 import MessageNav from './MessageNav';
@@ -34,36 +33,28 @@ function MessagesViewContent({
     showScrollButton,
     handleSmoothToRef,
     debouncedHandleScroll,
-    pinnedToBottomRef,
   } = useMessageScrolling(_messagesTree);
 
   const { conversationId } = conversation ?? {};
 
   return (
-    <MessageWindowingProvider
-      key={conversationId ?? 'no-conversation'}
+    <MessagesViewBody
+      messagesTree={_messagesTree}
+      localize={localize}
+      fontSize={fontSize}
+      screenshotTargetRef={screenshotTargetRef}
+      scrollButtonPreference={scrollButtonPreference}
+      currentEditId={currentEditId}
+      setCurrentEditId={setCurrentEditId}
+      scrollToBottomRef={scrollToBottomRef}
       scrollableRef={scrollableRef}
+      contentRef={contentRef}
+      messagesEndRef={messagesEndRef}
+      showScrollButton={showScrollButton}
+      handleSmoothToRef={handleSmoothToRef}
+      debouncedHandleScroll={debouncedHandleScroll}
       conversationId={conversationId}
-      pinnedToBottomRef={pinnedToBottomRef}
-    >
-      <MessagesViewBody
-        messagesTree={_messagesTree}
-        localize={localize}
-        fontSize={fontSize}
-        screenshotTargetRef={screenshotTargetRef}
-        scrollButtonPreference={scrollButtonPreference}
-        currentEditId={currentEditId}
-        setCurrentEditId={setCurrentEditId}
-        scrollToBottomRef={scrollToBottomRef}
-        scrollableRef={scrollableRef}
-        contentRef={contentRef}
-        messagesEndRef={messagesEndRef}
-        showScrollButton={showScrollButton}
-        handleSmoothToRef={handleSmoothToRef}
-        debouncedHandleScroll={debouncedHandleScroll}
-        conversationId={conversationId}
-      />
-    </MessageWindowingProvider>
+    />
   );
 }
 
@@ -102,12 +93,6 @@ function MessagesViewBody({
   debouncedHandleScroll,
   conversationId,
 }: MessagesViewBodyProps) {
-  const { materializeAll } = useMessageWindowing();
-  const { registerMaterializer } = useScreenshot();
-  useEffect(
-    () => registerMaterializer?.(() => materializeAll('screenshot')),
-    [registerMaterializer, materializeAll],
-  );
   return (
     <>
       <div className="relative flex-1 overflow-hidden overflow-y-auto">

@@ -10,7 +10,7 @@ import {
   useContentMetadata,
   useSelectionPreserve,
 } from '~/hooks';
-import { cn, getHeaderPrefixForScreenReader, getMessageAriaLabel } from '~/utils';
+import { cn, getHeaderPrefixForScreenReader } from '~/utils';
 import MessageTimestamp from '~/components/Chat/Messages/ui/MessageTimestamp';
 import MessageIcon from '~/components/Chat/Messages/MessageIcon';
 import ContentParts from './Content/ContentParts';
@@ -21,7 +21,7 @@ import HoverButtons from './HoverButtons';
 import ResponseTokens from './ResponseTokens';
 import SubRow from './SubRow';
 import store from '~/store';
-import { VirtualizedMessageRow } from './Windowing';
+import { MessageShell } from './Windowing';
 
 export default function Message(props: TMessageProps) {
   const localize = useLocalize();
@@ -109,90 +109,90 @@ export default function Message(props: TMessageProps) {
 
   return (
     <>
-      <VirtualizedMessageRow messageId={messageId ?? ''} message={message} forceMounted={isSubmitting || currentEditId === messageId}>
-      <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
-        <div className="m-auto justify-center p-4 py-2 md:gap-6">
-          <div
-            ref={messageRef}
-            className={cn(
-              baseClasses.common,
-              baseClasses.chat,
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
-            )}
-          >
-            {!hasParallelContent && (
-              <div className="relative flex flex-shrink-0 flex-col items-center">
-                <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full pt-0.5">
-                  <MessageIcon iconData={iconData} assistant={assistant} agent={agent} />
-                </div>
-              </div>
-            )}
+      <MessageShell messageId={messageId ?? ''} message={message}>
+        <div className="w-full border-0 bg-transparent dark:border-0 dark:bg-transparent">
+          <div className="m-auto justify-center p-4 py-2 md:gap-6">
             <div
+              ref={messageRef}
               className={cn(
-                'relative flex flex-col',
-                hasParallelContent ? 'w-full' : 'w-11/12',
-                isCreatedByUser ? 'user-turn' : 'agent-turn',
+                baseClasses.common,
+                baseClasses.chat,
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-xheavy',
               )}
             >
               {!hasParallelContent && (
-                <h2 className={cn('select-none font-semibold text-text-primary', fontSize)}>
-                  <span className="sr-only">
-                    {getHeaderPrefixForScreenReader(message, localize)}
-                  </span>
-                  {name}
-                  <MessageTimestamp value={message.createdAt ?? message.clientTimestamp} />
-                </h2>
-              )}
-              <div className="flex flex-col gap-1">
-                <div className="flex min-h-[20px] max-w-full flex-grow flex-col gap-0">
-                  <ContentParts
-                    edit={edit}
-                    isLast={isLast}
-                    enterEdit={enterEdit}
-                    siblingIdx={siblingIdx}
-                    attachments={attachments}
-                    isSubmitting={isSubmitting}
-                    searchResults={searchResults}
-                    manualSkills={message.manualSkills}
-                    messageId={message.messageId}
-                    setSiblingIdx={setSiblingIdx}
-                    isCreatedByUser={message.isCreatedByUser}
-                    conversationId={conversation?.conversationId}
-                    isLatestMessage={messageId === latestMessageId}
-                    content={message.content as Array<TMessageContentParts | undefined>}
-                  />
+                <div className="relative flex flex-shrink-0 flex-col items-center">
+                  <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full pt-0.5">
+                    <MessageIcon iconData={iconData} assistant={assistant} agent={agent} />
+                  </div>
                 </div>
-                {isLast && isSubmitting ? (
-                  <div className="mt-1 h-[31px] bg-transparent" />
-                ) : (
-                  <SubRow classes="text-xs">
-                    <SiblingSwitch
-                      siblingIdx={siblingIdx}
-                      siblingCount={siblingCount}
-                      setSiblingIdx={setSiblingIdx}
-                    />
-                    <HoverButtons
-                      index={index}
-                      isEditing={edit}
-                      message={message}
-                      enterEdit={enterEdit}
-                      isSubmitting={isSubmitting}
-                      conversation={conversation ?? null}
-                      regenerate={() => regenerateMessage()}
-                      copyToClipboard={copyToClipboard}
-                      handleContinue={handleContinue}
-                      latestMessageId={latestMessageId}
-                      isLast={isLast}
-                    />
-                    <ResponseTokens message={message} isLast={isLast} />
-                  </SubRow>
+              )}
+              <div
+                className={cn(
+                  'relative flex flex-col',
+                  hasParallelContent ? 'w-full' : 'w-11/12',
+                  isCreatedByUser ? 'user-turn' : 'agent-turn',
                 )}
+              >
+                {!hasParallelContent && (
+                  <h2 className={cn('select-none font-semibold text-text-primary', fontSize)}>
+                    <span className="sr-only">
+                      {getHeaderPrefixForScreenReader(message, localize)}
+                    </span>
+                    {name}
+                    <MessageTimestamp value={message.createdAt ?? message.clientTimestamp} />
+                  </h2>
+                )}
+                <div className="flex flex-col gap-1">
+                  <div className="flex min-h-[20px] max-w-full flex-grow flex-col gap-0">
+                    <ContentParts
+                      edit={edit}
+                      isLast={isLast}
+                      enterEdit={enterEdit}
+                      siblingIdx={siblingIdx}
+                      attachments={attachments}
+                      isSubmitting={isSubmitting}
+                      searchResults={searchResults}
+                      manualSkills={message.manualSkills}
+                      messageId={message.messageId}
+                      setSiblingIdx={setSiblingIdx}
+                      isCreatedByUser={message.isCreatedByUser}
+                      conversationId={conversation?.conversationId}
+                      isLatestMessage={messageId === latestMessageId}
+                      content={message.content as Array<TMessageContentParts | undefined>}
+                    />
+                  </div>
+                  {isLast && isSubmitting ? (
+                    <div className="mt-1 h-[31px] bg-transparent" />
+                  ) : (
+                    <SubRow classes="text-xs">
+                      <SiblingSwitch
+                        siblingIdx={siblingIdx}
+                        siblingCount={siblingCount}
+                        setSiblingIdx={setSiblingIdx}
+                      />
+                      <HoverButtons
+                        index={index}
+                        isEditing={edit}
+                        message={message}
+                        enterEdit={enterEdit}
+                        isSubmitting={isSubmitting}
+                        conversation={conversation ?? null}
+                        regenerate={() => regenerateMessage()}
+                        copyToClipboard={copyToClipboard}
+                        handleContinue={handleContinue}
+                        latestMessageId={latestMessageId}
+                        isLast={isLast}
+                      />
+                      <ResponseTokens message={message} isLast={isLast} />
+                    </SubRow>
+                  )}
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-      </VirtualizedMessageRow>
+      </MessageShell>
       <MultiMessage
         messageId={messageId}
         conversation={conversation}
