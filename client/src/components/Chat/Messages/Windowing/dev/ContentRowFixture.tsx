@@ -60,12 +60,18 @@ export function SyntheticRow({
   spec,
   expanded,
   alwaysMounted,
+  churn,
+  growth,
   onToggleExpanded,
   onToggleAlwaysMounted,
 }: {
   spec: RowSpec;
   expanded: boolean;
   alwaysMounted: boolean;
+  /** Deliberately mutate this row's height forever (±40px, 8x/second). */
+  churn: boolean;
+  /** Deliberately grow this row once, 1.5s after mount (+60px). */
+  growth: boolean;
   onToggleExpanded: (id: string) => void;
   onToggleAlwaysMounted: (id: string) => void;
 }) {
@@ -108,22 +114,22 @@ export function SyntheticRow({
   // Content that grows after it was measured: the placeholder must keep the measured height,
   // so the transition back to real content has to be corrected rather than jump.
   useEffect(() => {
-    if (!spec.growth) {
+    if (!growth || !spec.growth) {
       return;
     }
     const timer = setTimeout(() => setGrown(true), 1500);
     return () => clearTimeout(timer);
-  }, [spec.growth]);
+  }, [growth, spec.growth]);
 
   // Geometry that never stops changing: the row cannot settle and must be demoted to an
   // effective always-mounted policy instead of ever becoming a placeholder.
   useEffect(() => {
-    if (!spec.neverSettles) {
+    if (!churn || !spec.neverSettles) {
       return;
     }
     const interval = setInterval(() => setGrown((value) => !value), 120);
     return () => clearInterval(interval);
-  }, [spec.neverSettles]);
+  }, [churn, spec.neverSettles]);
 
   const height = spec.height + (grown ? (spec.growth ?? 40) : 0);
 
@@ -218,6 +224,10 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
   const [seed, setSeed] = useState(0);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [alwaysMounted, setAlwaysMounted] = useState<ReadonlySet<string>>(new Set());
+  // Off by default: these deliberately mutate layout, which would make every scrolling test
+  // show jumps that come from the harness rather than from the provider.
+  const [churn, setChurn] = useState(false);
+  const [growth, setGrowth] = useState(false);
   const [snapshot, setSnapshot] = useState<ContentRowDiagnosticsSnapshot | null>(null);
   const [domCount, setDomCount] = useState(0);
   const [materialized, setMaterialized] = useState(false);
@@ -273,39 +283,188 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
   }, [refresh, windowing]);
 
   /**
-   * Development-only console handle, so the acceptance checks are one-liners:
+   * Development-only console handle.
    *
-   *   __lcRows.materialize()   mount everything and hold
-   *   __lcRows.release()       restore normal windowing
-   *   __lcRows.find()          synchronously materialize, as Cmd/Ctrl+F does
-   *   __lcRows.rowCount()      current row/shell counts
+   *   __lcRows.report()      print the whole gate report with PASS/FAIL per item
+   *   __lcRows.idleCheck()   call once to arm, again after 8s to confirm it went quiet
+   *   __lcRows.reset()       zero the counters
+   *   __lcRows.materialize() / release() / find()
+   *   __lcRows.rowCount()    raw counts
+   *
+   * The report lives here so each acceptance check is one short command, instead of a
+   * multi-line paste that a console can mangle.
    */
   useEffect(() => {
+    const rowCount = () => {
+      const all = document.querySelectorAll('[data-content-virtual-row="true"]');
+      const placeholders = document.querySelectorAll(
+        '[data-content-virtual-row="true"][data-content-mounted="false"]',
+      );
+      let insidePlaceholders = 0;
+      let badHeight = 0;
+      placeholders.forEach((element) => {
+        insidePlaceholders += element.getElementsByTagName('*').length;
+        const height = parseFloat((element as HTMLElement).style.height);
+        if (!(height > 0)) {
+          badHeight += 1;
+        }
+      });
+      return {
+        virtualRows: all.length,
+        mounted: document.querySelectorAll(
+          '[data-content-virtual-row="true"][data-content-mounted="true"]',
+        ).length,
+        placeholders: placeholders.length,
+        descendantsInsidePlaceholders: insidePlaceholders,
+        placeholdersWithoutHeight: badHeight,
+        totalElements: document.getElementsByTagName('*').length,
+      };
+    };
+
+    const idle = { applied: 0, settled: 0, settle: 0, at: 0 };
+
     const handle = {
       materialize,
       release,
       find: simulateFind,
-      rowCount: () => ({
-        virtualRows: document.querySelectorAll('[data-content-virtual-row="true"]').length,
-        mounted: document.querySelectorAll(
-          '[data-content-virtual-row="true"][data-content-mounted="true"]',
-        ).length,
-        placeholders: document.querySelectorAll(
-          '[data-content-virtual-row="true"][data-content-mounted="false"]',
-        ).length,
-        descendantsInsidePlaceholders: [
-          ...document.querySelectorAll(
-            '[data-content-virtual-row="true"][data-content-mounted="false"]',
-          ),
-        ].reduce((total, element) => total + element.getElementsByTagName('*').length, 0),
-        totalElements: document.getElementsByTagName('*').length,
-      }),
+      reset: () => window.__lcContentRows?.reset(),
+      rowCount,
+      /** First call arms the baseline; a later call reports what changed in between. */
+      idleCheck: () => {
+        const snapshot = window.__lcContentRows?.snapshot();
+        if (!snapshot) {
+          return 'no provider on this page';
+        }
+        if (idle.at === 0) {
+          idle.applied = snapshot.appliedPasses;
+          idle.settled = snapshot.scheduledByReason.settled;
+          idle.settle = snapshot.settlementPasses;
+          idle.at = Date.now();
+          return 'baseline armed — wait 8s with no input, then call __lcRows.idleCheck() again';
+        }
+        const window8 = {
+          applied: snapshot.appliedPasses - idle.applied,
+          settled: snapshot.scheduledByReason.settled - idle.settled,
+          settle: snapshot.settlementPasses - idle.settle,
+          seconds: Math.round((Date.now() - idle.at) / 100) / 10,
+        };
+        idle.at = 0;
+        const quiet = window8.applied === 0 && window8.settled === 0 && window8.settle === 0;
+        return {
+          verdict: quiet ? 'PASS idle: no work while untouched' : 'FAIL idle: still working',
+          window: window8,
+          note: quiet
+            ? 'provider converged to an idle steady state'
+            : 'if a further 8s window shows zeros, this was a bounded tail',
+        };
+      },
+      report: () => {
+        const snapshot = window.__lcContentRows?.snapshot();
+        if (!snapshot) {
+          return 'no provider on this page';
+        }
+        const r = rowCount();
+        const results: Array<[string, boolean, string]> = [
+          [
+            'placeholders contain no leftover DOM',
+            r.descendantsInsidePlaceholders === 0,
+            String(r.descendantsInsidePlaceholders),
+          ],
+          [
+            'every placeholder has a real positive px height',
+            r.placeholdersWithoutHeight === 0,
+            r.placeholdersWithoutHeight + ' bad',
+          ],
+          [
+            'some distant rows are unmounted',
+            r.placeholders > 0,
+            r.placeholders + ' of ' + r.virtualRows,
+          ],
+          [
+            'stale/placeholder measurements accepted is 0',
+            snapshot.staleMeasurementsAccepted === 0,
+            String(snapshot.staleMeasurementsAccepted),
+          ],
+          [
+            'no over-budget corrections',
+            snapshot.overBudgetCorrections === 0,
+            String(snapshot.overBudgetCorrections),
+          ],
+          [
+            'unmounts per frame <= 8',
+            snapshot.unmountCountsPerFrame.max <= 8,
+            String(snapshot.unmountCountsPerFrame.max),
+          ],
+          [
+            'no materialization timeout',
+            snapshot.materializationTimeouts === 0,
+            String(snapshot.materializationTimeouts),
+          ],
+        ];
+        console.log('===== Stage 2 gate report =====');
+        console.log(
+          'rows  registered=' +
+            snapshot.registeredRows +
+            '  mounted=' +
+            snapshot.mountedRows +
+            '  placeholders=' +
+            snapshot.placeholderRows,
+        );
+        console.log(
+          'dom   virtualRows=' +
+            r.virtualRows +
+            '  elementsInsidePlaceholders=' +
+            r.descendantsInsidePlaceholders +
+            '  totalElements=' +
+            r.totalElements,
+        );
+        results.forEach(([label, ok, detail]) => {
+          console.log((ok ? 'PASS' : 'FAIL') + '  ' + label + '   (' + detail + ')');
+        });
+        console.log('--- judge these yourself ---');
+        console.log(
+          'max remount displacement = ' +
+            (snapshot.anchorDisplacement.max ?? 0) +
+            'px   (spec target: <= 2px)',
+        );
+        console.log(
+          'max correction applied    = ' +
+            (snapshot.anchorCorrection.max ?? 0) +
+            'px   (spec target: <= 100px)',
+        );
+        console.log(
+          'async resize corrections  = ' +
+            snapshot.asyncCorrection.count +
+            '  max ' +
+            (snapshot.asyncCorrection.max ?? 0) +
+            'px',
+        );
+        console.log('--- context ---');
+        console.log(
+          'timeouts=' +
+            snapshot.settlementTimeouts +
+            ' alwaysMounted=' +
+            snapshot.alwaysMountedRows +
+            ' reasons=' +
+            JSON.stringify(snapshot.settlementTimeoutDetails.map((x) => x.reason)),
+        );
+        console.log('rejected=' + JSON.stringify(snapshot.rejectedByReason));
+        console.log('byTrigger=' + JSON.stringify(snapshot.scheduledByReason));
+        console.log(
+          'harness churn=' +
+            churn +
+            ' growth=' +
+            growth +
+            '   (keep both OFF when judging scroll smoothness)',
+        );
+        return 'scroll smoothness is your judgement, not this report';
+      },
     };
     (window as unknown as { __lcRows?: unknown }).__lcRows = handle;
     return () => {
       (window as unknown as { __lcRows?: unknown }).__lcRows = undefined;
     };
-  }, [materialize, release, simulateFind]);
+  }, [churn, growth, materialize, release, simulateFind]);
 
   /** Real Cmd/Ctrl+F, mirroring the §20.7.8 contract in the fixture. */
   useEffect(() => {
@@ -340,6 +499,28 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
             }}
           />
           windowing enabled
+        </label>
+
+        <div style={{ opacity: 0.7 }} className="mb-2">
+          harness layout mutation — leave both OFF when judging scroll smoothness
+        </div>
+        <label className="mb-1 flex items-center gap-2">
+          <input
+            type="checkbox"
+            data-testid="churn-toggle"
+            checked={churn}
+            onChange={(event) => setChurn(event.target.checked)}
+          />
+          churn rows (±40px, 8×/s)
+        </label>
+        <label className="mb-3 flex items-center gap-2">
+          <input
+            type="checkbox"
+            data-testid="growth-toggle"
+            checked={growth}
+            onChange={(event) => setGrowth(event.target.checked)}
+          />
+          growing rows (+60px once)
         </label>
 
         <div className="my-2 flex flex-wrap gap-2">
@@ -416,6 +597,8 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
               spec={spec}
               expanded={expanded.has(spec.id)}
               alwaysMounted={alwaysMounted.has(spec.id)}
+              churn={churn}
+              growth={growth}
               onToggleExpanded={(id) => setExpanded((set) => toggle(set, id))}
               onToggleAlwaysMounted={(id) => setAlwaysMounted((set) => toggle(set, id))}
             />
