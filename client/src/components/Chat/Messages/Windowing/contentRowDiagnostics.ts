@@ -27,6 +27,7 @@ import {
   type ContentRowPinReason,
   type ContentRowRecord,
   type ContentRowRejectReason,
+  type ContentRowPassDiscardReason,
   type ContentRowReflowState,
   type ContentRowTimeoutDetail,
   type ContentRowValueStats,
@@ -62,6 +63,9 @@ export type ContentRowDiagnosticsCollector = {
   recordMountBatch(batch: ContentRowMountBatchDiagnostics): void;
   recordAsyncCorrection(correction: number): void;
   recordViewportBypass(count: number): void;
+  recordPassScheduled(): void;
+  recordPassApplied(): void;
+  recordPassDiscarded(reason: ContentRowPassDiscardReason): void;
   recordOverBudgetCorrection(): void;
   startWarmUp(at?: number): void;
   completeWarmUp(at?: number): void;
@@ -102,6 +106,16 @@ export function createRejectReasonCountMap(): Record<ContentRowRejectReason, num
     'bucket-mismatch': 0,
     'fingerprint-mismatch': 0,
     'invalid-height': 0,
+  };
+}
+
+export function createPassDiscardCountMap(): Record<ContentRowPassDiscardReason, number> {
+  return {
+    'conversation-changed': 0,
+    'direction-changed': 0,
+    'bucket-changed': 0,
+    materializing: 0,
+    'no-root': 0,
   };
 }
 
@@ -283,6 +297,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
 
   let rejectedByReason = createRejectReasonCountMap();
   let pinsByReason = createPinReasonCountMap();
+  let discardedPasses = createPassDiscardCountMap();
+  let appliedPasses = 0;
+  let scheduledPasses = 0;
   const settlementTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const readinessTimeoutDetails: ContentRowTimeoutDetail[] = [];
   const materializationTimeoutDetails: string[] = [];
@@ -345,6 +362,15 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
     recordViewportBypass(count) {
       viewportBudgetBypass += count;
     },
+    recordPassScheduled() {
+      scheduledPasses += 1;
+    },
+    recordPassApplied() {
+      appliedPasses += 1;
+    },
+    recordPassDiscarded(reason) {
+      discardedPasses[reason] += 1;
+    },
     recordOverBudgetCorrection() {
       overBudgetCorrections += 1;
     },
@@ -385,6 +411,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
         anchorDisplacement: summarizeValues(anchorDisplacements),
         anchorCorrection: summarizeValues(anchorCorrections),
         asyncCorrection: summarizeValues(asyncCorrections),
+        discardedPasses: { ...discardedPasses },
+        appliedPasses,
+        scheduledPasses,
         warmUpDurationMs,
         warmUpComplete,
       };
@@ -406,6 +435,9 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
       warmUpComplete = false;
       rejectedByReason = createRejectReasonCountMap();
       pinsByReason = createPinReasonCountMap();
+      discardedPasses = createPassDiscardCountMap();
+      appliedPasses = 0;
+      scheduledPasses = 0;
       settlementTimeoutDetails.length = 0;
       readinessTimeoutDetails.length = 0;
       materializationTimeoutDetails.length = 0;

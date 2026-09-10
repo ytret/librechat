@@ -344,6 +344,14 @@ export type ContentRowFrameStats = {
   mean: number | null;
 };
 
+/** Why a scheduled geometry pass was discarded before doing any work (§10 step 7). */
+export type ContentRowPassDiscardReason =
+  | 'conversation-changed'
+  | 'direction-changed'
+  | 'bucket-changed'
+  | 'materializing'
+  | 'no-root';
+
 export type ContentRowTimeoutDetail = {
   debugKey: string;
   kind: ContentRowKind;
@@ -396,6 +404,16 @@ export type ContentRowDiagnosticsSnapshot = ContentRowDiagnosticsLive & {
   anchorCorrection: ContentRowValueStats;
   /** Corrections applied for later asynchronous resizes (§11.3), not mount batches. */
   asyncCorrection: ContentRowValueStats;
+  /**
+   * Geometry passes that were discarded before doing any work, by reason (§10 step 7). A
+   * non-zero count is normal after a direction change or a bucket change; a count that keeps
+   * climbing while nothing else happens means passes are never being applied.
+   */
+  discardedPasses: Record<ContentRowPassDiscardReason, number>;
+  /** Completed geometry passes, i.e. passes that classified rows and applied a batch. */
+  appliedPasses: number;
+  /** Total geometry passes scheduled. */
+  scheduledPasses: number;
   warmUpDurationMs: number | null;
   warmUpComplete: boolean;
 };

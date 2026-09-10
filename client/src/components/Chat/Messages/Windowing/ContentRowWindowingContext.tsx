@@ -268,6 +268,10 @@ export function ContentRowWindowingProvider({
     }
     warmUpComplete.current = true;
     diagnostics.current.completeWarmUp();
+    // §8.1 step 6 — after warm-up the provider evaluates distance and unmounts eligible
+    // distant rows. Without this pass nothing would unmount until the reader scrolled, since
+    // the only other triggers are scroll and intersection events.
+    scheduleGeometryPass.current();
   }, []);
 
   /**
@@ -291,6 +295,9 @@ export function ContentRowWindowingProvider({
       record.mountState = 'MOUNTED_MEASURED_SETTLED';
       pendingSettlements.current.delete(token);
       settlementDeadlines.current.delete(token);
+      // Settling is what makes a row eligible to unmount, so the window must be re-evaluated.
+      // The pass is frame-debounced, so a burst of settlements produces one pass.
+      scheduleGeometryPass.current();
       maybeCompleteWarmUp();
     },
     [maybeCompleteWarmUp],
@@ -652,6 +659,7 @@ export function ContentRowWindowingProvider({
     }) => {
       const root = scrollRootRef.current;
       if (!root) {
+        diagnostics.current.recordPassDiscarded('no-root');
         return;
       }
       // §10 step 7 — discard queued decisions when the conversation, layout bucket, or
@@ -659,17 +667,26 @@ export function ContentRowWindowingProvider({
       // pass so the change is not lost.
       if (materializationMode.current !== 'none') {
         // §10 step 7 — a materialization owns mount state; a geometry pass would fight it.
+        diagnostics.current.recordPassDiscarded('materializing');
         return;
       }
-      const bucket = currentBucket();
-      if (
-        pass.conversationEpoch !== conversationEpoch.current ||
-        pass.directionEpoch !== directionEpoch.current ||
-        pass.layoutBucket !== bucket
-      ) {
+      if (pass.conversationEpoch !== conversationEpoch.current) {
+        diagnostics.current.recordPassDiscarded('conversation-changed');
         scheduleGeometryPass.current();
         return;
       }
+      if (pass.directionEpoch !== directionEpoch.current) {
+        diagnostics.current.recordPassDiscarded('direction-changed');
+        scheduleGeometryPass.current();
+        return;
+      }
+      const bucket = currentBucket();
+      if (pass.layoutBucket !== bucket) {
+        diagnostics.current.recordPassDiscarded('bucket-changed');
+        scheduleGeometryPass.current();
+        return;
+      }
+      diagnostics.current.recordPassApplied();
 
       const rootRect = root.getBoundingClientRect();
       const direction = lastScrollDirection.current;
@@ -778,6 +795,7 @@ export function ContentRowWindowingProvider({
     if (loop.frame != null) {
       return;
     }
+    diagnostics.current.recordPassScheduled();
     const pass = {
       id: (geometryPassId.current += 1),
       conversationEpoch: conversationEpoch.current,

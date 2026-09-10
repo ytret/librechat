@@ -410,6 +410,18 @@ describe('unmount budget and hysteresis', () => {
     expect(unmountBatchStats().total).toBe(total);
   });
 
+  it('unmounts distant rows after warm-up without waiting for a scroll event', () => {
+    // Regression: the only other triggers are scroll and intersection-callback updates, so
+    // without a pass scheduled on settlement nothing unmounted until the reader scrolled.
+    render(<Harness>{manyRows(3)}</Harness>);
+    layoutBelowBand(3);
+    // no scrollBy anywhere in this test: settlement alone must produce the unmount pass
+    settleAll();
+    expect(placeholderRows()).toBe(3);
+    expect(mountedRows()).toBe(0);
+    expect(scrollWrites).toHaveLength(0);
+  });
+
   it('retains a row that is outside the overscan but inside the hysteresis band', () => {
     render(<Harness>{manyRows(1)}</Harness>);
     settleAll();
