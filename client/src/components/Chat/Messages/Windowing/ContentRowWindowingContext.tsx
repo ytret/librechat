@@ -31,6 +31,7 @@ import {
 } from './contentRowDiagnostics';
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
 import type {
+  ContentRowDemotionReason,
   ContentRowDiagnosticsSnapshot,
   ContentRowMaterializeReason,
   ContentRowMeasurementSource,
@@ -56,6 +57,7 @@ import {
   CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
   CONTENT_ROW_UNMOUNT_HYSTERESIS_PX,
   MAX_MOUNTS_PER_FRAME,
+  MAX_SETTLEMENT_ATTEMPTS,
   MAX_UNMOUNTS_PER_FRAME,
 } from './contentRowTypes';
 
@@ -242,23 +244,6 @@ export function ContentRowWindowingProvider({
     record.policy === 'windowed' && record.pinnedByPolicy == null;
 
   /**
-   * Note that a row has geometry to measure. Arms the per-row settlement timeout (§8.1)
-   * and starts the quiet-frame loop. A row that keeps resizing keeps getting
-   * measurements, but the deadline is *not* refreshed by them: the timeout exists to
-   * stop unknown asynchronous geometry from ever becoming a placeholder.
-   */
-  const beginMeasurementWork = useCallback((record: ContentRowRecord) => {
-    if (!needsSettlementTracking(record)) {
-      return;
-    }
-    settlementDeadlines.current.set(
-      record.token,
-      performanceNow() + CONTENT_ROW_SETTLEMENT_TIMEOUT_MS,
-    );
-    scheduleSettlementLoop.current();
-  }, []);
-
-  /**
    * Complete warm-up once fonts are ready and no windowed row is still unsettled
    * (§8.1). A row that timed out is not "settled", but it can never become eligible to
    * unmount, so it must not hold warm-up open forever.
@@ -286,6 +271,68 @@ export function ContentRowWindowingProvider({
     // the only other triggers are scroll and intersection events.
     scheduleGeometryPass.current('warm-up');
   }, []);
+
+  /**
+   * Give up on windowing a row and keep it mounted for good (§8.1). Terminal by design: the row
+   * needs no settlement bookkeeping afterwards and never schedules work again, which is what
+   * guarantees the provider returns to idle.
+   */
+  const demoteRow = useCallback(
+    (record: ContentRowRecord, reason: ContentRowDemotionReason) => {
+      record.policy = 'always-mounted';
+      record.pinnedByPolicy = reason === 'too-many-attempts' ? 'unstable' : 'settlement-timeout';
+      settlementDeadlines.current.delete(record.token);
+      pendingSettlements.current.delete(record.token);
+      const elapsedMs =
+        record.settlementStartedAt == null
+          ? 0
+          : Math.max(0, Math.round(performanceNow() - record.settlementStartedAt));
+      diagnostics.current.recordSettleTimeout({
+        debugKey: record.debugKey,
+        kind: record.kind,
+        elapsedMs,
+        reason,
+      });
+      if (record.readinessPending > 0) {
+        diagnostics.current.recordReadinessTimeout({
+          debugKey: record.debugKey,
+          kind: record.kind,
+          elapsedMs,
+          reason,
+        });
+      }
+      maybeCompleteWarmUp();
+    },
+    [maybeCompleteWarmUp],
+  );
+
+  /**
+   * Note that a row has geometry to measure. Arms the per-row settlement timeout (§8.1)
+   * and starts the quiet-frame loop. A row that keeps resizing keeps getting
+   * measurements, but the deadline is *not* refreshed by them: the timeout exists to
+   * stop unknown asynchronous geometry from ever becoming a placeholder.
+   */
+  const beginMeasurementWork = useCallback(
+    (record: ContentRowRecord) => {
+      if (!needsSettlementTracking(record)) {
+        return;
+      }
+      const now = performanceNow();
+      record.settlementAttempts += 1;
+      if (record.settlementAttempts === 1) {
+        record.settlementStartedAt = now;
+      }
+      if (record.settlementAttempts > MAX_SETTLEMENT_ATTEMPTS) {
+        // The row settled and re-unsettled repeatedly, so no single budget ever elapsed. Its
+        // geometry is permanently unstable: keep it mounted and stop tracking it.
+        demoteRow(record, 'too-many-attempts');
+        return;
+      }
+      settlementDeadlines.current.set(record.token, now + CONTENT_ROW_SETTLEMENT_TIMEOUT_MS);
+      scheduleSettlementLoop.current();
+    },
+    [demoteRow],
+  );
 
   /**
    * Mark a row settled for its current generation (§7.5). Only a mounted, measured,
@@ -339,24 +386,7 @@ export function ContentRowWindowingProvider({
       if (record.settled || now < deadline) {
         return;
       }
-      const elapsedMs = Math.round(now - (deadline - CONTENT_ROW_SETTLEMENT_TIMEOUT_MS));
-      record.policy = 'always-mounted';
-      record.pinnedByPolicy = 'settlement-timeout';
-      settlementDeadlines.current.delete(token);
-      pendingSettlements.current.delete(token);
-      diagnostics.current.recordSettleTimeout({
-        debugKey: record.debugKey,
-        kind: record.kind,
-        elapsedMs,
-      });
-      if (record.readinessPending > 0) {
-        diagnostics.current.recordReadinessTimeout({
-          debugKey: record.debugKey,
-          kind: record.kind,
-          elapsedMs,
-        });
-      }
-      maybeCompleteWarmUp();
+      demoteRow(record, 'budget-expired');
     });
 
     if (fontsReady.current) {
@@ -381,7 +411,7 @@ export function ContentRowWindowingProvider({
         markRowSettled(token, record.generation);
       });
     }
-  }, [markRowSettled, maybeCompleteWarmUp]);
+  }, [demoteRow, markRowSettled]);
 
   scheduleSettlementLoop.current = () => {
     const loop = settlementLoop.current;
@@ -870,6 +900,9 @@ export function ContentRowWindowingProvider({
       record.measuredElement = null;
       record.measuredHeight = undefined;
       record.settled = false;
+      // New content is a fresh settlement problem: its attempt budget starts over.
+      record.settlementAttempts = 0;
+      record.settlementStartedAt = null;
       record.mounted = true;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
@@ -931,6 +964,8 @@ export function ContentRowWindowingProvider({
         oversized: false,
         pinnedByPolicy: null,
         pins: new Set(),
+        settlementAttempts: 0,
+        settlementStartedAt: null,
         readinessPending: 0,
         measurementWaiters: new Set(),
         setMounted: registration.setMounted,
@@ -1043,13 +1078,16 @@ export function ContentRowWindowingProvider({
         if (!settlementDeadlines.current.has(record.token)) {
           // The row has no settlement budget in flight. That happens when it already settled
           // once (which clears the deadline) and has now changed again, so this is a new
-          // settlement attempt and it gets a full budget. Without this, a row that settles and
-          // re-resizes could repeat forever and §8.1's timeout could never demote it — which is
-          // exactly what was observed: an unbounded settle/unsettle loop with no demotion.
+          // settlement attempt and it gets a full budget.
           beginMeasurementWork(record);
         }
-        pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
-        scheduleSettlementLoop.current();
+        // Re-check: that call may have just demoted the row for exceeding its attempt budget.
+        // Setting a pending entry afterwards would resurrect bookkeeping for a row that is
+        // permanently mounted, and the provider would never go idle.
+        if (needsSettlementTracking(record)) {
+          pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
+          scheduleSettlementLoop.current();
+        }
       }
       releaseMeasurementWaiters(record);
     },

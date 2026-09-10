@@ -90,6 +90,8 @@ export type ContentRowPinReason =
   /** §8.1 — the row exceeded the settlement timeout, so it is effectively
    *  always-mounted and must never become a placeholder. */
   | 'settlement-timeout'
+  /** The row settled and re-unsettled too many times; treated as permanently unstable. */
+  | 'unstable'
   /** §11.3 — an asynchronous resize needed a correction above the development budget. */
   | 'async-correction'
   | 'debug';
@@ -134,6 +136,19 @@ export const CONTENT_ROW_SETTLEMENT_TIMEOUT_MS = 2000;
 
 /** §8.1 — a row settles after its initial measurement plus two quiet frames. */
 export const CONTENT_ROW_QUIET_FRAMES = 2;
+
+/**
+ * How many times the provider will try to bring one row to a stable settled state before
+ * treating its geometry as permanently unstable and keeping it mounted for good.
+ *
+ * The §8.1 budget alone is not sufficient. §8.2 assumes a row that "keeps resizing ... never
+ * settles", but a row whose resize cadence is slower than
+ * `CONTENT_ROW_QUIET_FRAMES` settles in the gaps between resizes: it settles, changes, settles
+ * again, and each cycle costs a geometry pass and a settlement pass forever. Bounding the
+ * number of attempts makes that case terminate deterministically, which is what guarantees the
+ * provider goes idle.
+ */
+export const MAX_SETTLEMENT_ATTEMPTS = 3;
 
 /** §11.1 — minimum anchor displacement that is worth a scroll write. */
 export const MIN_ANCHOR_CORRECTION_PX = 0.5;
@@ -294,6 +309,13 @@ export type ContentRowRecord = {
   oversized: boolean;
   /** Reason the row can never unmount, e.g. a settlement timeout (§8.1). */
   pinnedByPolicy: ContentRowPinReason | null;
+  /**
+   * Settlement budgets armed for this row's current generation. Bounded by
+   * `MAX_SETTLEMENT_ATTEMPTS` so a row that settles and re-unsettles cannot cycle forever.
+   */
+  settlementAttempts: number;
+  /** When the current settlement attempt sequence began, for timeout diagnostics. */
+  settlementStartedAt: number | null;
   pins: Set<ContentRowPinReason>;
   /**
    * Number of registered asynchronous renderers that have not reported ready (§8.2).
@@ -371,7 +393,18 @@ export type ContentRowTimeoutDetail = {
   debugKey: string;
   kind: ContentRowKind;
   elapsedMs: number;
+  /** Which condition demoted the row. */
+  reason: ContentRowDemotionReason;
 };
+
+/**
+ * Why a row was demoted to an effective always-mounted policy.
+ *
+ * - `budget-expired` — the §8.1 settlement budget elapsed while the row was still unsettled.
+ * - `too-many-attempts` — the row kept settling and re-unsettling, so no single budget ever
+ *   expired; it is treated as permanently unstable instead.
+ */
+export type ContentRowDemotionReason = 'budget-expired' | 'too-many-attempts';
 
 /** Live registry state, supplied by the provider when a snapshot is taken. */
 export type ContentRowDiagnosticsLive = {

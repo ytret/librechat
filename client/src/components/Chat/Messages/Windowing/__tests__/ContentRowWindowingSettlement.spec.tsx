@@ -588,6 +588,75 @@ describe('a row that keeps changing size', () => {
     expect(api.getDiagnostics().settlementPasses).toBe(loopPasses);
   });
 
+  /**
+   * The browser-gate cadence: the row resizes on a period LONGER than the quiet-frame
+   * requirement, so it settles in the gaps and §8.1's budget alone never elapses. Bounded
+   * settlement attempts must still terminate it.
+   */
+  const oscillateWithGaps = (blocks: number, gapFrames = 7) => {
+    const { token, generation, element } = registered[0];
+    for (let block = 0; block < blocks; block++) {
+      for (let frame = 0; frame < gapFrames; frame++) {
+        flushFrames(1);
+        advanceClock(60);
+        const d = api.getDiagnostics();
+        if (d.settlementTimeouts > 0) {
+          return;
+        }
+      }
+      act(() => {
+        api.reportMountedContentHeight(
+          token,
+          generation,
+          api.getLayoutBucket(),
+          element,
+          200 + (block % 2 === 0 ? 40 : 0),
+          'resize-observer',
+        );
+      });
+    }
+  };
+
+  it('demotes a row that settles in the gaps between resizes, and then goes idle', async () => {
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    oscillateWithGaps(40);
+    const snapshot = api.getDiagnostics();
+    expect(snapshot.settlementTimeouts).toBeGreaterThan(0);
+    expect(snapshot.alwaysMountedRows).toBe(1);
+    expect(snapshot.pendingSettlementRows).toBe(0);
+    expect(snapshot.settlementDeadlineRows).toBe(0);
+    expect(snapshot.settlementTimeoutDetails[0].reason).toBe('too-many-attempts');
+
+    // and from here on, nothing changes size and nothing schedules work
+    const applied = snapshot.appliedPasses;
+    const settlePasses = snapshot.settlementPasses;
+    oscillateWithGaps(40);
+    flushFrames(5);
+    expect(api.getDiagnostics().appliedPasses).toBe(applied);
+    expect(api.getDiagnostics().settlementPasses).toBe(settlePasses);
+  });
+
+  it('records the attempt budget in diagnostics when a row is demoted for churn', async () => {
+    render(
+      <Harness>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+    await resolveFonts();
+    // settle once so the first attempt is spent, then churn
+    flushFrames(CONTENT_ROW_QUIET_FRAMES + 1);
+    expect(settled()).toBe(1);
+    oscillateWithGaps(40);
+    const snapshot = api.getDiagnostics();
+    expect(snapshot.alwaysMountedRows).toBe(1);
+    expect(snapshot.settlementTimeoutDetails[0].reason).toBe('too-many-attempts');
+  });
+
   it('still settles and goes idle for an ordinary row that stops changing', async () => {
     render(
       <Harness>

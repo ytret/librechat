@@ -16,7 +16,12 @@ import type { ContentRowDiagnosticsSnapshot, ContentRowRecord } from '../content
 
 const live = () => createEmptyDiagnosticsLive();
 
-const detail = (debugKey: string) => ({ debugKey, kind: 'markdown' as const, elapsedMs: 2000 });
+const detail = (debugKey: string) => ({
+  debugKey,
+  kind: 'markdown' as const,
+  elapsedMs: 2000,
+  reason: 'budget-expired' as const,
+});
 
 describe('summarizeValues', () => {
   it('returns nulls for an empty list rather than zeros or NaN', () => {
