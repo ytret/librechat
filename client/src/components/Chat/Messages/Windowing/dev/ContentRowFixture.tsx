@@ -7,6 +7,7 @@ import {
 } from '../contentRowFeatureFlag';
 import { createRowToken } from '../contentRowIdentity';
 import type { ContentRowDiagnosticsSnapshot, ContentRowKind } from '../contentRowTypes';
+import { createFrameVisibilitySampler } from './frameVisibilitySampler';
 
 /**
  * Development-only acceptance harness for content-row windowing (Stage 2 task 2.7).
@@ -35,6 +36,41 @@ export type RowSpec = {
 };
 
 const KIND_CYCLE: ContentRowKind[] = ['markdown', 'summary', 'generic', 'reasoning', 'image'];
+
+/**
+ * Dev-only visual marker for placeholder bands.
+ *
+ * The whole §12.8 investigation was confused by an ambiguity no counter can resolve: a
+ * placeholder is an empty div with **no background** (`client/src/style.css`), so an unmounted
+ * row and an un-rasterised region of the scroll pane look *identical* on screen — both show
+ * the pane's flat background. Honest DOM instruments cannot tell a reader which of the two they
+ * are looking at, and the reader cannot tell the instruments.
+ *
+ * With this marker a placeholder is unmistakable: a tinted, dashed, labelled band. So during a
+ * repro the reader can say whether what they saw was a placeholder band (windowing-related) or
+ * a plain void (not windowing-related).
+ *
+ * Scoped to the fixture's own scroll pane and injected from the fixture, so nothing here reaches
+ * production CSS. Pseudo-elements do not count as descendants, so `descendantsInsidePlaceholders`
+ * in `__lcRows.rowCount()` is unaffected by the label.
+ */
+const PLACEHOLDER_MARKER_CSS = `
+[data-testid="fixture-scroll"] .content-virtual-row[data-content-mounted="false"] {
+  position: relative;
+  background: rgba(245, 158, 11, 0.18);
+  outline: 2px dashed #f59e0b;
+  outline-offset: -2px;
+}
+[data-testid="fixture-scroll"] .content-virtual-row[data-content-mounted="false"]::after {
+  content: "placeholder";
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  font: 500 11px/1 ui-monospace, monospace;
+  letter-spacing: 0.08em;
+  color: #f59e0b;
+}
+`;
 
 export function buildRows(count: number, seed: number): RowSpec[] {
   return Array.from({ length: count }, (_, index) => {
@@ -234,6 +270,16 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
   const restoreRef = useRef<(() => void) | null>(null);
 
   const rows = useMemo(() => buildRows(rowCount, seed), [rowCount, seed]);
+  // §12.8 instrumentation: measures what the reader actually sees, per frame, independently
+  // of the provider's own counters. Dev-only, and it exists solely to be driven from the
+  // console handle below.
+  const sampler = useMemo(() => createFrameVisibilitySampler(), []);
+  useEffect(
+    () => () => {
+      sampler.stop(false);
+    },
+    [sampler],
+  );
 
   const refresh = useCallback(() => {
     setSnapshot(windowing.getDiagnostics());
@@ -290,6 +336,8 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
    *   __lcRows.reset()       zero the counters
    *   __lcRows.materialize() / release() / find()
    *   __lcRows.rowCount()    raw counts
+   *   __lcRows.sample(20)    sample what is really on screen every frame for 20s, then print
+   *   __lcRows.sampleStop()  stop early and print what was collected
    *
    * The report lives here so each acceptance check is one short command, instead of a
    * multi-line paste that a console can mangle.
@@ -329,6 +377,8 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
       find: simulateFind,
       reset: () => window.__lcContentRows?.reset(),
       rowCount,
+      sample: (seconds?: number) => sampler.start(scrollRef.current, seconds),
+      sampleStop: () => sampler.stop(true),
       /** First call arms the baseline; a later call reports what changed in between. */
       idleCheck: () => {
         const snapshot = window.__lcContentRows?.snapshot();
@@ -512,7 +562,7 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
     return () => {
       (window as unknown as { __lcRows?: unknown }).__lcRows = undefined;
     };
-  }, [churn, growth, materialize, release, simulateFind]);
+  }, [churn, growth, materialize, release, sampler, simulateFind, scrollRef]);
 
   /** Real Cmd/Ctrl+F, mirroring the §20.7.8 contract in the fixture. */
   useEffect(() => {
@@ -638,6 +688,7 @@ function FixtureBody({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement>
       </aside>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto" data-testid="fixture-scroll">
+        <style>{PLACEHOLDER_MARKER_CSS}</style>
         <div className="p-3">
           {rows.map((spec) => (
             <SyntheticRow
