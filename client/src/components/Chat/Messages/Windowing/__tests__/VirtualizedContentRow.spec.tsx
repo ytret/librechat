@@ -84,11 +84,17 @@ function Probe() {
   return null;
 }
 
-function Harness({ children }: { children?: React.ReactNode }) {
+function Harness({
+  children,
+  conversationId = 'conversation-1',
+}: {
+  children?: React.ReactNode;
+  conversationId?: string;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (
     <div ref={scrollRef} className="scroll-root">
-      <ContentRowWindowingProvider scrollRootRef={scrollRef} conversationId="conversation-1">
+      <ContentRowWindowingProvider scrollRootRef={scrollRef} conversationId={conversationId}>
         <Probe />
         {children}
       </ContentRowWindowingProvider>
@@ -258,10 +264,31 @@ describe('materialization', () => {
     expect(api.getDiagnostics().mountedRows).toBe(1);
   });
 
-  it('clears materialization mode when the conversation changes', () => {
+  /**
+   * §17.2 / §20.7.9. The previous version of this test asserted `reflowState === 'idle'`
+   * immediately after materializing, without ever changing the conversation. `reflowState` was a
+   * field that was written once at `'idle'` and never updated, so the assertion was a constant:
+   * it passed with the defect present and would have passed with materialization never cleared at
+   * all. The clear itself was also missing, so find mode survived every later conversation.
+   */
+  it('reports the materialization in the reflow state while it is held', () => {
     render(<Harness>{row()}</Harness>);
-    act(() => api.materializeAllSync('find'));
     expect(api.getDiagnostics().reflowState).toBe('idle');
+    act(() => api.materializeAllSync('find'));
+    expect(api.getDiagnostics().reflowState).toBe('reflow-materialized');
+  });
+
+  it('clears find materialization when the conversation changes', () => {
+    const { rerender } = render(<Harness>{row()}</Harness>);
+    act(() => api.materializeAllSync('find'));
+    expect(api.getDiagnostics().reflowState).toBe('reflow-materialized');
+
+    rerender(<Harness conversationId="conversation-2">{row()}</Harness>);
+
+    expect(api.getDiagnostics().reflowState).toBe('idle');
+    // Windowing must be usable again: a pass that arrives after the change is no longer
+    // discarded because a materialization owns mount state.
+    expect(api.getDiagnostics().discardedPasses.materializing).toBe(0);
   });
 });
 

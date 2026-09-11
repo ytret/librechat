@@ -176,7 +176,6 @@ export function ContentRowWindowingProvider({
   const mountedElements = useRef(new WeakMap<Element, MountedElementMapping>());
   const diagnostics = useRef(createContentRowDiagnostics());
   const layoutBucket = useRef<LayoutBucket | null>(null);
-  const reflowState = useRef<ContentRowReflowState>('idle');
   const conversationRef = useRef<string | null>(conversationId ?? null);
   const resizeObserver = useRef<ResizeObserver | undefined>(undefined);
   const fontsReady = useRef(false);
@@ -215,6 +214,20 @@ export function ContentRowWindowingProvider({
   const transitionBatchId = useRef(0);
   /** Non-'none' while a materialization operation owns the DOM (§10 step 7). */
   const materializationMode = useRef<'none' | ContentRowMaterializeReason>('none');
+
+  /**
+   * The reflow state is the materialization mode (§13, §23): while a materialization owns mount
+   * state, windowing is suspended and the snapshot has to say so.
+   *
+   * Derived rather than stored. The field this replaces was written once at `'idle'` and never
+   * updated, so every snapshot reported `idle` even mid-materialization — and the test that
+   * claimed to cover §20.7.9 asserted that constant, so it could not fail.
+   */
+  const currentReflowState = useCallback(
+    (): ContentRowReflowState =>
+      materializationMode.current === 'none' ? 'idle' : 'reflow-materialized',
+    [],
+  );
   const pinnedToBottomFallbackRef = useRef(false);
   const pinnedToBottom = pinnedToBottomRef ?? pinnedToBottomFallbackRef;
 
@@ -1468,12 +1481,12 @@ export function ContentRowWindowingProvider({
     return diagnostics.current.snapshot(
       createLiveDiagnosticsState(rows.current.values(), {
         layoutBucket: layoutBucket.current,
-        reflowState: reflowState.current,
+        reflowState: currentReflowState(),
         pendingSettlementRows: pendingSettlements.current.size,
         settlementDeadlineRows: settlementDeadlines.current.size,
       }),
     );
-  }, []);
+  }, [currentReflowState]);
 
   const value = useMemo(
     () => ({
@@ -1696,12 +1709,12 @@ export function ContentRowWindowingProvider({
       getLive: () =>
         createLiveDiagnosticsState(rows.current.values(), {
           layoutBucket: layoutBucket.current,
-          reflowState: reflowState.current,
+          reflowState: currentReflowState(),
           pendingSettlementRows: pendingSettlements.current.size,
           settlementDeadlineRows: settlementDeadlines.current.size,
         }),
     });
-  }, [isDevelopment]);
+  }, [currentReflowState, isDevelopment]);
 
   /**
    * A conversation change must not let a reused component position keep a height
@@ -1714,6 +1727,13 @@ export function ContentRowWindowingProvider({
     // A new conversation starts a fresh warm-up phase (§8.1).
     warmUpComplete.current = false;
     conversationEpoch.current += 1;
+    // §17.2 / §20.7.9 — "keep all rows mounted until conversation change": the conversation
+    // change is what ends find and selection materialization, because the browser exposes no
+    // find-close event. This clear was missing, so after a single Cmd+F the provider owned mount
+    // state for the life of the page: every geometry pass was discarded as 'materializing'
+    // (`runGeometryPass`), all rows stayed mounted in every later conversation, and windowing
+    // never resumed.
+    materializationMode.current = 'none';
     diagnostics.current.startWarmUp();
     scheduleGeometryPass.current('conversation');
     rows.current.forEach((record) => {
