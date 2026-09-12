@@ -30,6 +30,7 @@ import {
   installContentRowDiagnostics,
 } from './contentRowDiagnostics';
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
+import { isOversizedRowHeight } from './contentRowPolicy';
 import type {
   ContentRowAttemptSource,
   ContentRowDemotionReason,
@@ -998,7 +999,9 @@ export function ContentRowWindowingProvider({
       record.measuredElement = null;
       record.measuredHeight = undefined;
       record.settled = false;
-      // New content is a fresh settlement problem: its attempt budget starts over.
+      // New content is a fresh settlement problem: its attempt budget and its oversized
+      // demotion both start over.
+      record.oversized = false;
       record.settlementAttempts = 0;
       record.settlementStartedAt = null;
       record.mounted = true;
@@ -1164,6 +1167,12 @@ export function ContentRowWindowingProvider({
       // §12: the browser value is retained for placeholders; rounding is diagnostics only.
       const previousHeight = record.measuredHeight;
       record.measuredHeight = height;
+      // §6 Q1 — past the large-row threshold the row is demoted to an effective always-mounted
+      // policy for this generation. Sticky, because the demotion is a statement about geometry
+      // Stage 3 cannot bound; a new source (a new generation) is re-evaluated.
+      if (isOversizedRowHeight(height)) {
+        record.oversized = true;
+      }
       record.settled = false;
       record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
       diagnostics.current.recordAcceptedMeasurement(source);

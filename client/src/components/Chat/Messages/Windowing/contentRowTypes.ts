@@ -140,6 +140,12 @@ export const MAX_MOUNTS_PER_FRAME = 4;
 export const MAX_UNMOUNTS_PER_FRAME = 8;
 export const MAX_EXPECTED_ACTIVE_SCROLL_CORRECTION_PX = 100;
 export const MAX_ACCEPTED_STEADY_STATE_DISPLACEMENT_PX = 2;
+/**
+ * A row measured taller than this never becomes windowable for that generation
+ * (`ai-reports/13-stage-3-conservative-non-text-rows.md` §6 Q1; spec §10 step 3 discards
+ * oversized rows). It keeps its full measured height — the threshold demotes, never caps.
+ */
+export const LARGE_ROW_HEIGHT_PX = 1200;
 
 /* -------------------------------------------------------------------------- */
 /* Other protocol constants                                                   */
