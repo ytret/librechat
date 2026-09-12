@@ -17,7 +17,7 @@ const registerPortal = jest.fn((_element: HTMLElement | null) => jest.fn());
 const containsNode = jest.fn(() => false);
 
 function makeRow(): ContentRowInteraction {
-  return { pinRow, registerPortal, containsNode };
+  return { pinRow, registerPortal, containsNode, reportReady: () => {}, reportFailed: () => {} };
 }
 
 const wrapper =

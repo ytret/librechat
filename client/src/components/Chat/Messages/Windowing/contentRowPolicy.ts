@@ -55,7 +55,13 @@ const CONTENT_TYPE_RULES: Record<ContentTypes, ContentTypeRule> = {
   [ContentTypes.IMAGE_FILE]: {
     kind: 'image',
     policy: 'unstable-until-settled',
-    forceMountedWhileStreaming: true,
+    /**
+     * False, unlike the other asynchronous kinds. An image's in-flight state is its pending load,
+     * which `unstable-until-settled` plus readiness already covers (§6 Q3); forcing it mounted
+     * while "streaming" would make a loaded image permanently unmountable, contradicting the
+     * explicit `unstable-until-settled` → `windowed` transition the same decision requires.
+     */
+    forceMountedWhileStreaming: false,
   },
   [ContentTypes.TOOL_CALL]: {
     kind: 'tool-group',

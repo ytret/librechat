@@ -20,7 +20,8 @@ import type {
  * unflagged tree installs no listeners at all.
  */
 
-export type ContentRowInteraction = {
+/** The pin and containment half of the row API; the row wrapper owns this itself. */
+export type ContentRowPins = {
   /** Hold this row mounted for a reason. Returns the release function. */
   pinRow(reason: ContentRowPinReason): () => void;
   /**
@@ -33,11 +34,45 @@ export type ContentRowInteraction = {
   containsNode(node: Node | null): boolean;
 };
 
+/** The asynchronous-content half of the row API; the row wrapper derives it from its own state. */
+export type ContentRowReadiness = {
+  /**
+   * Report this row's asynchronous content as loaded and painted (§8.2, §6 Q3). A row whose policy
+   * is `unstable-until-settled` becomes `windowed` on this signal; a row with any other policy
+   * ignores it. Idempotent, and scoped to the generation that was mounted when it was called.
+   */
+  reportReady(): void;
+  /**
+   * Report that the asynchronous content cannot load (§6 Q3 item 4). The row keeps its content
+   * mounted rather than reserving geometry for something that will never arrive.
+   */
+  reportFailed(): void;
+};
+
+/** Everything a row subtree may ask of the row that contains it. */
+export type ContentRowInteraction = ContentRowPins & ContentRowReadiness;
+
 const ContentRowInteractionContext = createContext<ContentRowInteraction | null>(null);
 
 /** The interaction API of the enclosing row, or null when no row owns this subtree. */
 export function useContentRowInteraction(): ContentRowInteraction | null {
   return useContext(ContentRowInteractionContext);
+}
+
+/**
+ * The readiness API of the enclosing row, or null when no row owns this subtree.
+ *
+ * Asynchronous renderers — images, and later Mermaid and artifacts — call this when their content
+ * has arrived, so the row can decide whether it is bounded and settled enough to window (§6 Q3).
+ * A renderer outside a row (the fixture, a subagent dialog, the feature flag off) gets null and
+ * reports nothing.
+ */
+export function useContentRowReadiness(): ContentRowReadiness | null {
+  const interaction = useContext(ContentRowInteractionContext);
+  if (interaction == null) {
+    return null;
+  }
+  return interaction;
 }
 
 /** Supplies the row interaction API to a row's subtree. */
@@ -79,7 +114,7 @@ export function useContentRowInteractionPins({
   windowing: ContentRowWindowingRuntime;
   token: ContentRowToken;
   shellRef: React.RefObject<HTMLElement>;
-}): { interaction: ContentRowInteraction; handlers: ContentRowInteractionHandlers } {
+}): { interaction: ContentRowPins; handlers: ContentRowInteractionHandlers } {
   const portals = useRef<Set<HTMLElement>>(new Set());
   const focusRelease = useRef<(() => void) | null>(null);
   const focusReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,7 +215,7 @@ export function useContentRowInteractionPins({
     [cancelFocusTimer, releaseFocus, releasePointer],
   );
 
-  const interaction = useMemo<ContentRowInteraction>(
+  const interaction = useMemo<ContentRowPins>(
     () => ({
       pinRow: (reason: ContentRowPinReason) => windowing.pinRow(token, reason),
       registerPortal: (element: HTMLElement | null) => {

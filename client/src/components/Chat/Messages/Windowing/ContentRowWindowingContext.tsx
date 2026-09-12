@@ -39,6 +39,7 @@ import type {
   ContentRowMeasurementSource,
   ContentRowPassScheduleReason,
   ContentRowPinReason,
+  ContentRowPolicy,
   ContentRowRecord,
   ContentRowReflowState,
   ContentRowRegistration,
@@ -457,6 +458,46 @@ export function ContentRowWindowingProvider({
       }
     });
   };
+
+  /**
+   * Write a new policy for a row, and keep its settlement bookkeeping consistent with it (§6 Q3).
+   *
+   * The two directions are not symmetric and both matter:
+   *
+   * - **Entering `windowed`** must arm a settlement cycle of its own. While the row was
+   *   `unstable-until-settled`, `needsSettlementTracking` was false, so no budget was ever armed;
+   *   a `policy`-only update therefore left the row `MOUNTED_MEASURED_UNSETTLED` for good,
+   *   `canRowUnmount` false, and no error anywhere. This is the ordering trap in §6 Q3.
+   * - **Leaving `windowed`** must drop any budget in flight. Otherwise a row that returns to a
+   *   mounting policy (a remounted image waiting for its paint again) would still be holding a
+   *   deadline, and the settlement pass would demote it to `always-mounted` with
+   *   `pinnedByPolicy: 'settlement-timeout'` for a state that was always meant to be temporary.
+   */
+  const applyPolicyChange = useCallback(
+    (record: ContentRowRecord, policy: ContentRowPolicy) => {
+      record.policy = policy;
+      if (!needsSettlementTracking(record)) {
+        settlementDeadlines.current.delete(record.token);
+        pendingSettlements.current.delete(record.token);
+        return;
+      }
+      // A fresh settlement cycle for the current generation: the height already accepted for this
+      // generation is kept (the element did not change), but the quiet-frame requirement starts
+      // over, so the row cannot be considered settled by a measurement taken before the flip.
+      record.settled = false;
+      if (record.mountState === 'MOUNTED_MEASURED_SETTLED') {
+        record.mountState = 'MOUNTED_MEASURED_UNSETTLED';
+      }
+      if (!settlementDeadlines.current.has(record.token)) {
+        beginMeasurementWork(record, 'policy');
+      }
+      if (needsSettlementTracking(record) && record.mounted && record.measuredHeight != null) {
+        pendingSettlements.current.set(record.token, CONTENT_ROW_QUIET_FRAMES);
+        scheduleSettlementLoop.current();
+      }
+    },
+    [beginMeasurementWork],
+  );
 
   /** Release a row's measurement waiters so navigation can proceed (§20.7.2). */
   const releaseMeasurementWaiters = useCallback((record: ContentRowRecord) => {
@@ -1107,8 +1148,8 @@ export function ContentRowWindowingProvider({
       if (update.debugKey !== undefined) {
         record.debugKey = update.debugKey;
       }
-      if (update.policy !== undefined) {
-        record.policy = update.policy;
+      if (update.policy !== undefined && update.policy !== record.policy) {
+        applyPolicyChange(record, update.policy);
       }
       if (update.forceMounted !== undefined) {
         record.forceMounted = update.forceMounted;
@@ -1117,7 +1158,7 @@ export function ContentRowWindowingProvider({
         startGeneration(record, update.fingerprint);
       }
     },
-    [indexByMessage, startGeneration, unindexByMessage],
+    [applyPolicyChange, indexByMessage, startGeneration, unindexByMessage],
   );
 
   const getLayoutBucket = useCallback(() => currentBucket(), [currentBucket]);

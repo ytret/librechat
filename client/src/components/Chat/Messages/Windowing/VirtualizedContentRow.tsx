@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   readElementBorderBoxHeight,
   useOptionalContentRowWindowing,
@@ -14,6 +14,7 @@ import {
   ContentRowInteractionProvider,
   useContentRowInteractionPins,
 } from './contentRowInteraction';
+import type { ContentRowInteraction } from './contentRowInteraction';
 import type {
   ContentRowKind,
   ContentRowPinReason,
@@ -113,11 +114,55 @@ function WindowedContentRow({
    * the only place in the row that adds DOM listeners, and every one of them is removed by the
    * same hook's cleanup.
    */
-  const { interaction, handlers } = useContentRowInteractionPins({
+  const { interaction: pins, handlers } = useContentRowInteractionPins({
     windowing,
     token: token.current,
     shellRef,
   });
+
+  /**
+   * Asynchronous-content readiness (§8.2, §6 Q3), recorded against the generation it was reported
+   * for. A row whose content reports ready becomes windowable; one that reports failure stays
+   * mounted. Storing the generation rather than a bare flag is what makes readiness reset by
+   * itself on a remount, without an effect: the freshly mounted generation is `pending` until its
+   * own content reports again — a cached image reports immediately, the current generation is
+   * still measured from scratch.
+   */
+  const generationRef = useRef(state.generation);
+  generationRef.current = state.generation;
+  const [readiness, setReadiness] = useState<{
+    generation: number;
+    status: 'ready' | 'failed';
+  } | null>(null);
+  const readinessStatus =
+    readiness != null && readiness.generation === state.generation ? readiness.status : 'pending';
+
+  const reportReady = useCallback(() => {
+    setReadiness({ generation: generationRef.current, status: 'ready' });
+  }, []);
+  const reportFailed = useCallback(() => {
+    setReadiness({ generation: generationRef.current, status: 'failed' });
+  }, []);
+
+  /**
+   * The policy actually registered: a `unstable-until-settled` source becomes `windowed` only once
+   * its content reports ready, and is kept mounted outright if it reports failure. Every other
+   * policy is passed through unchanged, so `always-mounted` content is never promoted by a
+   * readiness signal it should not have received.
+   */
+  const resolvedPolicy: ContentRowPolicy =
+    policy !== 'unstable-until-settled'
+      ? policy
+      : readinessStatus === 'ready'
+        ? 'windowed'
+        : readinessStatus === 'failed'
+          ? 'always-mounted'
+          : 'unstable-until-settled';
+
+  const interaction = useMemo<ContentRowInteraction>(
+    () => ({ ...pins, reportReady, reportFailed }),
+    [pins, reportFailed, reportReady],
+  );
 
   /**
    * Registration uses the latest props without re-registering on every prop change; later
@@ -131,10 +176,10 @@ function WindowedContentRow({
     debugKey,
     kind,
     fingerprint,
-    policy,
+    policy: resolvedPolicy,
     forceMounted,
   });
-  latest.current = { messageId, debugKey, kind, fingerprint, policy, forceMounted };
+  latest.current = { messageId, debugKey, kind, fingerprint, policy: resolvedPolicy, forceMounted };
 
   useLayoutEffect(() => {
     const current = latest.current;
@@ -156,8 +201,14 @@ function WindowedContentRow({
   }, [windowing]);
 
   useEffect(() => {
-    windowing.updateRow(token.current, { messageId, debugKey, fingerprint, policy, forceMounted });
-  }, [windowing, messageId, debugKey, fingerprint, policy, forceMounted]);
+    windowing.updateRow(token.current, {
+      messageId,
+      debugKey,
+      fingerprint,
+      policy: resolvedPolicy,
+      forceMounted,
+    });
+  }, [windowing, messageId, debugKey, fingerprint, resolvedPolicy, forceMounted]);
 
   useEffect(() => {
     if (!pinReason) {

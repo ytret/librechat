@@ -12,6 +12,7 @@ import { ParallelContentRenderer, type PartWithIndex } from './ParallelContent';
 import { mapAttachments, groupSequentialToolCalls } from '~/utils';
 import { showThinkingAtom } from '~/store/showThinking';
 import { MessageContext, SearchContext } from '~/Providers';
+import { ContentPartRow } from '../Windowing/ContentPartRow';
 import PendingSkillCall from './Parts/PendingSkillCall';
 import { EditTextPart, EmptyText } from './Parts';
 import MemoryArtifacts from './MemoryArtifacts';
@@ -75,6 +76,29 @@ const defaultExpansionFor = (
  * owner cannot know; see `useToolExpansion`.
  */
 const isToolPart = (part: TMessageContentParts): boolean => part.type === ContentTypes.TOOL_CALL;
+
+/**
+ * True while the part is still being written by the stream (report 13 §6 Q1). Reasoning is
+ * streaming until the backend stamps its duration; a summary is streaming while it reports that it
+ * is summarizing. Images and errors are never streaming steps: an image's in-flight state is its
+ * load, which readiness covers, and an error is already final.
+ */
+const isStreamingPart = (part: TMessageContentParts, isSubmitting: boolean): boolean => {
+  if (!isSubmitting) {
+    return false;
+  }
+  if (part.type === ContentTypes.THINK) {
+    return part.thinkDuration == null;
+  }
+  if (part.type === ContentTypes.SUMMARY) {
+    return part.summarizing === true;
+  }
+  return false;
+};
+
+/** Expansion state only changes the geometry of the kinds that have one (§12). */
+const hasExpansionGeometry = (part: TMessageContentParts): boolean =>
+  part.type === ContentTypes.THINK || part.type === ContentTypes.SUMMARY;
 
 type PartWithContextProps = {
   part: TMessageContentParts;
@@ -330,22 +354,32 @@ const ContentParts = memo(function ContentParts({
 
   const renderPart = useCallback(
     (part: TMessageContentParts, idx: number, isLastPart: boolean) => {
+      const expansionProps = expansionPropsFor(part, idx);
       return (
-        <PartWithContext
+        <ContentPartRow
           key={`provider-${messageId}-${idx}`}
-          idx={idx}
-          part={part}
-          isLast={isLast}
           messageId={messageId}
-          isLastPart={isLastPart}
-          conversationId={conversationId}
-          isLatestMessage={isLatestMessage}
-          isCreatedByUser={isCreatedByUser}
-          nextType={content?.[idx + 1]?.type}
-          isSubmitting={effectiveIsSubmitting}
-          partAttachments={attachmentMap[getToolCallId(part)]}
-          {...expansionPropsFor(part, idx)}
-        />
+          part={part}
+          idx={idx}
+          streaming={isStreamingPart(part, effectiveIsSubmitting)}
+          stateKey={hasExpansionGeometry(part) ? expansionProps.isExpanded : undefined}
+          disabled={part.groupId != null}
+        >
+          <PartWithContext
+            idx={idx}
+            part={part}
+            isLast={isLast}
+            messageId={messageId}
+            isLastPart={isLastPart}
+            conversationId={conversationId}
+            isLatestMessage={isLatestMessage}
+            isCreatedByUser={isCreatedByUser}
+            nextType={content?.[idx + 1]?.type}
+            isSubmitting={effectiveIsSubmitting}
+            partAttachments={attachmentMap[getToolCallId(part)]}
+            {...expansionProps}
+          />
+        </ContentPartRow>
       );
     },
     [
@@ -363,24 +397,34 @@ const ContentParts = memo(function ContentParts({
 
   const renderGroupedPart = useCallback(
     (part: TMessageContentParts, idx: number, isLastPart: boolean, onToolExpand?: () => void) => {
+      const expansionProps = expansionPropsFor(part, idx);
       return (
-        <PartWithContext
+        <ContentPartRow
           key={`provider-${messageId}-${idx}`}
-          idx={idx}
-          part={part}
-          isLast={isLast}
           messageId={messageId}
-          isLastPart={isLastPart}
-          conversationId={conversationId}
-          isLatestMessage={isLatestMessage}
-          isCreatedByUser={isCreatedByUser}
-          nextType={content?.[idx + 1]?.type}
-          isSubmitting={effectiveIsSubmitting}
-          partAttachments={attachmentMap[getToolCallId(part)]}
-          hideAttachments
-          onToolExpand={onToolExpand}
-          {...expansionPropsFor(part, idx)}
-        />
+          part={part}
+          idx={idx}
+          streaming={isStreamingPart(part, effectiveIsSubmitting)}
+          stateKey={hasExpansionGeometry(part) ? expansionProps.isExpanded : undefined}
+          disabled={part.groupId != null}
+        >
+          <PartWithContext
+            idx={idx}
+            part={part}
+            isLast={isLast}
+            messageId={messageId}
+            isLastPart={isLastPart}
+            conversationId={conversationId}
+            isLatestMessage={isLatestMessage}
+            isCreatedByUser={isCreatedByUser}
+            nextType={content?.[idx + 1]?.type}
+            isSubmitting={effectiveIsSubmitting}
+            partAttachments={attachmentMap[getToolCallId(part)]}
+            hideAttachments
+            onToolExpand={onToolExpand}
+            {...expansionProps}
+          />
+        </ContentPartRow>
       );
     },
     [

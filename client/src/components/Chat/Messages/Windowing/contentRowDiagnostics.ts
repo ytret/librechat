@@ -127,6 +127,7 @@ export function createAttemptSourceCountMap(): Record<ContentRowAttemptSource, n
     rearm: 0,
     invalidate: 0,
     generation: 0,
+    policy: 0,
   };
 }
 

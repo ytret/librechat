@@ -21,6 +21,8 @@ function makeRow(): ContentRowInteraction {
     pinRow,
     registerPortal: () => () => {},
     containsNode: () => false,
+    reportReady: () => {},
+    reportFailed: () => {},
   };
 }
 

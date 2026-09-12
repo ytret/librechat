@@ -2,6 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Skeleton } from '@librechat/client';
 import { apiBaseUrl } from 'librechat-data-provider';
 import { useContentRowPortalPin } from '~/components/Chat/Messages/Windowing/useContentRowPortalPin';
+import { useContentRowReadiness } from '~/components/Chat/Messages/Windowing/contentRowInteraction';
 import DialogImage from './DialogImage';
 import { cn } from '~/utils';
 
@@ -48,6 +49,23 @@ const Image = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const paintFrame = useRef<number | null>(null);
+  /**
+   * Image readiness for content-row windowing (§8.2, §6 Q3). A known-size image row starts
+   * `unstable-until-settled`, so reporting the load is what makes it windowable; a failure keeps
+   * it mounted. Null whenever no row owns this image, which is every case outside windowing.
+   */
+  const rowReadiness = useContentRowReadiness();
+
+  useEffect(
+    () => () => {
+      if (paintFrame.current != null) {
+        cancelAnimationFrame(paintFrame.current);
+      }
+    },
+    [],
+  );
+
   /**
    * The image dialog is portaled outside the row subtree, so the row that owns this part would
    * otherwise be free to unmount and take the open dialog down with it. It is the first call site
@@ -122,6 +140,28 @@ const Image = ({
   const heightStyle = hasDimensions ? computeHeightStyle(dims.width, dims.height) : undefined;
   const showSkeleton = hasDimensions && !paintedUrls.has(absoluteImageUrl);
 
+  /**
+   * Report the load once the image has been painted. A URL already painted in this session is
+   * reported immediately: the row still has to settle in its current generation, but it does not
+   * need a second paint to know the image is there.
+   */
+  const handleImageLoad = () => {
+    if (rowReadiness == null) {
+      paintedUrls.add(absoluteImageUrl);
+      return;
+    }
+    const alreadyPainted = paintedUrls.has(absoluteImageUrl);
+    paintedUrls.add(absoluteImageUrl);
+    if (alreadyPainted) {
+      rowReadiness.reportReady();
+      return;
+    }
+    paintFrame.current = requestAnimationFrame(() => {
+      paintFrame.current = null;
+      rowReadiness.reportReady();
+    });
+  };
+
   return (
     <div>
       <button
@@ -141,7 +181,8 @@ const Image = ({
         <img
           alt={altText}
           src={absoluteImageUrl}
-          onLoad={() => paintedUrls.add(absoluteImageUrl)}
+          onLoad={handleImageLoad}
+          onError={() => rowReadiness?.reportFailed()}
           className={cn(
             'relative block text-transparent',
             hasDimensions

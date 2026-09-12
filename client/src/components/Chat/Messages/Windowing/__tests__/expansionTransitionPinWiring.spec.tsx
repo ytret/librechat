@@ -56,6 +56,8 @@ function Row({ children }: { children: React.ReactNode }) {
       },
       registerPortal: () => () => {},
       containsNode: () => false,
+      reportReady: () => {},
+      reportFailed: () => {},
     }),
     [],
   );

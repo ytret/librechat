@@ -402,7 +402,9 @@ export type ContentRowAttemptSource =
   | 'content'
   | 'rearm'
   | 'invalidate'
-  | 'generation';
+  | 'generation'
+  /** §6 Q3 — a row entering `windowed` from `unstable-until-settled` arms its own budget. */
+  | 'policy';
 
 export type ContentRowPassScheduleReason =
   | 'register'
