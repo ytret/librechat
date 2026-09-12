@@ -6,6 +6,7 @@ import { CSSTransition } from 'react-transition-group';
 import type { TMessage } from 'librechat-data-provider';
 import { useScreenshot, useMessageScrolling, useLocalize } from '~/hooks';
 import ScrollToBottom from '~/components/Messages/ScrollToBottom';
+import { ContentRowWindowingHost } from './Windowing/ContentRowWindowingHost';
 import { MessagesViewProvider } from '~/Providers';
 import { fontSizeAtom } from '~/store/fontSize';
 import MultiMessage from './MultiMessage';
@@ -30,6 +31,7 @@ function MessagesViewContent({
     contentRef,
     scrollableRef,
     messagesEndRef,
+    pinnedToBottomRef,
     showScrollButton,
     handleSmoothToRef,
     debouncedHandleScroll,
@@ -50,6 +52,7 @@ function MessagesViewContent({
       scrollableRef={scrollableRef}
       contentRef={contentRef}
       messagesEndRef={messagesEndRef}
+      pinnedToBottomRef={pinnedToBottomRef}
       showScrollButton={showScrollButton}
       handleSmoothToRef={handleSmoothToRef}
       debouncedHandleScroll={debouncedHandleScroll}
@@ -70,6 +73,7 @@ type MessagesViewBodyProps = {
   scrollableRef: ReturnType<typeof useMessageScrolling>['scrollableRef'];
   contentRef: ReturnType<typeof useMessageScrolling>['contentRef'];
   messagesEndRef: ReturnType<typeof useMessageScrolling>['messagesEndRef'];
+  pinnedToBottomRef: ReturnType<typeof useMessageScrolling>['pinnedToBottomRef'];
   showScrollButton: ReturnType<typeof useMessageScrolling>['showScrollButton'];
   handleSmoothToRef: ReturnType<typeof useMessageScrolling>['handleSmoothToRef'];
   debouncedHandleScroll: ReturnType<typeof useMessageScrolling>['debouncedHandleScroll'];
@@ -88,6 +92,7 @@ function MessagesViewBody({
   scrollableRef,
   contentRef,
   messagesEndRef,
+  pinnedToBottomRef,
   showScrollButton,
   handleSmoothToRef,
   debouncedHandleScroll,
@@ -120,12 +125,18 @@ function MessagesViewBody({
               ) : (
                 <>
                   <div ref={screenshotTargetRef}>
-                    <MultiMessage
-                      messagesTree={messagesTree}
-                      messageId={conversationId ?? null}
-                      setCurrentEditId={setCurrentEditId}
-                      currentEditId={currentEditId ?? null}
-                    />
+                    <ContentRowWindowingHost
+                      scrollRootRef={scrollableRef}
+                      conversationId={conversationId}
+                      pinnedToBottomRef={pinnedToBottomRef}
+                    >
+                      <MultiMessage
+                        messagesTree={messagesTree}
+                        messageId={conversationId ?? null}
+                        setCurrentEditId={setCurrentEditId}
+                        currentEditId={currentEditId ?? null}
+                      />
+                    </ContentRowWindowingHost>
                   </div>
                 </>
               )}
