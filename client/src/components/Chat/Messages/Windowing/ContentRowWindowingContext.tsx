@@ -68,6 +68,126 @@ import {
   MAX_UNMOUNTS_PER_FRAME,
 } from './contentRowTypes';
 
+/**
+ * Document-order predicates for the selection interval (§15.3, report 13 §6 Q8).
+ *
+ * A row is in the interval when it is not wholly before the selection's start and not wholly after
+ * its end, so a row that merely *contains* an endpoint counts as inside. `compareDocumentPosition`
+ * expresses both relations directly — "contains" and "is contained by" are exactly the cases a
+ * naive preceding/following test gets wrong — and nothing walks DOM descendants on any frame.
+ */
+function isBefore(node: Node, reference: Node): boolean {
+  const position = reference.compareDocumentPosition(node);
+  return (
+    (position & Node.DOCUMENT_POSITION_PRECEDING) !== 0 &&
+    (position & Node.DOCUMENT_POSITION_CONTAINS) === 0
+  );
+}
+
+function isAfter(node: Node, reference: Node): boolean {
+  const position = reference.compareDocumentPosition(node);
+  return (
+    (position & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+    (position & Node.DOCUMENT_POSITION_CONTAINED_BY) === 0
+  );
+}
+
+/**
+ * Selection state for the pinned interval (§15.3, report 13 §6 Q8).
+ *
+ * Read at frame time and never on the event. Three other paths write the selection and can make it
+ * look collapsed mid-flight — `useSelectionPreserve` removes and re-adds a range in one layout
+ * effect during streaming, `QuoteButton` collapses on scroll and resize, and double-click
+ * selection — so a handler that treated the transient empty state as terminal would release pins
+ * mid-restore.
+ *
+ * Only an existing selection is protected: extending one through content that is already a
+ * placeholder is Stage 5's directional materialization, not this.
+ */
+function useSelectionIntervalPins({
+  rows,
+  collectionScope,
+  pinRow,
+}: {
+  rows: React.RefObject<Map<ContentRowToken, ContentRowRecord>>;
+  /** Re-pins from scratch when the conversation changes; a stale interval must not survive it. */
+  collectionScope: string | null | undefined;
+  pinRow: (token: ContentRowToken, reason: ContentRowPinReason) => () => void;
+}) {
+  const pinRowRef = useRef(pinRow);
+  pinRowRef.current = pinRow;
+
+  useEffect(() => {
+    const pins = new Map<ContentRowToken, () => void>();
+    const frame = { id: undefined as number | undefined };
+    const release = (token: ContentRowToken) => {
+      const releasePin = pins.get(token);
+      pins.delete(token);
+      releasePin?.();
+    };
+    const releaseAll = () => {
+      Array.from(pins.keys()).forEach(release);
+    };
+
+    const applyPins = () => {
+      frame.id = undefined;
+      const selection = typeof document === 'undefined' ? null : document.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        releaseAll();
+        return;
+      }
+      const anchor = selection.anchorNode;
+      const focus = selection.focusNode;
+      if (!anchor || !focus) {
+        releaseAll();
+        return;
+      }
+      const start = isBefore(focus, anchor) ? focus : anchor;
+      const end = start === anchor ? focus : anchor;
+
+      const interval = new Set<ContentRowToken>();
+      rows.current?.forEach((record) => {
+        const shell = record.shellElement;
+        if (!shell || !shell.isConnected) {
+          return;
+        }
+        if (!isBefore(shell, start) && !isAfter(shell, end)) {
+          interval.add(record.token);
+        }
+      });
+
+      Array.from(pins.keys()).forEach((token) => {
+        if (!interval.has(token)) {
+          release(token);
+        }
+      });
+      interval.forEach((token) => {
+        if (!pins.has(token)) {
+          pins.set(token, pinRowRef.current(token, 'selection'));
+        }
+      });
+    };
+
+    /** Coalesced to at most one evaluation per animation frame, as §15.3 requires. */
+    const schedule = () => {
+      if (frame.id != null) {
+        return;
+      }
+      frame.id = requestAnimationFrame(applyPins);
+    };
+
+    document.addEventListener('selectionchange', schedule);
+    return () => {
+      document.removeEventListener('selectionchange', schedule);
+      if (frame.id != null) {
+        cancelAnimationFrame(frame.id);
+        frame.id = undefined;
+      }
+      releaseAll();
+    };
+  }, [collectionScope, rows]);
+}
+
 /** Observer mapping for a mounted content element (§7.4). */
 export type MountedElementMapping = {
   token: ContentRowToken;
@@ -1344,6 +1464,13 @@ export function ContentRowWindowingProvider({
     },
     [mountRow],
   );
+
+  /**
+   * Protect an existing native selection (§15.3, report 13 §6 Q8): every registered row in DOM
+   * order between the selection's anchor and focus cannot become a placeholder. Stage 5 owns the
+   * directional and select-all cases, which materialize content that is not mounted yet.
+   */
+  useSelectionIntervalPins({ rows, collectionScope: conversationId, pinRow });
 
   /**
    * Mount everything for a screenshot, find, selection, or debug capture (§17.1, §20.7.5–.6).
