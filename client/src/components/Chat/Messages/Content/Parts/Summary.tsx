@@ -5,6 +5,7 @@ import { ScrollText, ChevronDown, ChevronUp } from 'lucide-react';
 import type { MouseEvent, FocusEvent } from 'react';
 import type { SummaryContentPart } from 'librechat-data-provider';
 import { fontSizeAtom } from '~/store/fontSize';
+import { useExpansionTransitionPin } from '~/components/Chat/Messages/Windowing/useExpansionTransitionPin';
 import { useMessageContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import { cn } from '~/utils';
@@ -242,6 +243,7 @@ const Summary = memo(
     const [isBarVisible, setIsBarVisible] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const { isSubmitting, isLatestMessage } = useMessageContext();
+    const { begin: beginTransitionPin, onTransitionEnd } = useExpansionTransitionPin();
 
     const text = useMemo(
       () =>
@@ -255,13 +257,15 @@ const Summary = memo(
     const handleClick = useCallback(
       (e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
+        // Hold this row until the expanding element finishes its transition (§6 Q9).
+        beginTransitionPin();
         if (isControlled) {
           onExpansionChange(expansionKey, !isExpanded);
           return;
         }
         setLocalIsExpanded((previous) => !previous);
       },
-      [isControlled, onExpansionChange, expansionKey, isExpanded],
+      [beginTransitionPin, isControlled, onExpansionChange, expansionKey, isExpanded],
     );
 
     const handleFocus = useCallback(() => setIsBarVisible(true), []);
@@ -334,6 +338,7 @@ const Summary = memo(
             style={{
               gridTemplateRows: isExpanded ? '1fr' : '0fr',
             }}
+            onTransitionEnd={onTransitionEnd}
           >
             <div className="relative overflow-hidden">
               <SummaryContent meta={meta}>{text}</SummaryContent>

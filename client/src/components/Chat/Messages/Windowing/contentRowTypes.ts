@@ -158,6 +158,14 @@ export const CONTENT_ROW_SETTLEMENT_TIMEOUT_MS = 2000;
 export const CONTENT_ROW_QUIET_FRAMES = 2;
 
 /**
+ * Fallback hold for an expansion transition pin (§6 Q9). The reasoning and summary expanders
+ * animate `grid-template-rows` over 300 ms; if no `transitionend` arrives within this window the
+ * pin is released anyway, so a cancelled, interrupted, or reduced-motion transition cannot pin a
+ * row forever.
+ */
+export const CONTENT_ROW_TRANSITION_PIN_FALLBACK_MS = 400;
+
+/**
  * How many times the provider will try to bring one row to a stable settled state before
  * treating its geometry as permanently unstable and keeping it mounted for good.
  *

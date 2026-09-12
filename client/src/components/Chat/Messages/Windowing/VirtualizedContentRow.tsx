@@ -10,6 +10,10 @@ import {
   formatDebugKey,
 } from './contentRowIdentity';
 import { isContentRowWindowingEnabled } from './contentRowFeatureFlag';
+import {
+  ContentRowInteractionProvider,
+  useContentRowInteractionPins,
+} from './contentRowInteraction';
 import type {
   ContentRowKind,
   ContentRowPinReason,
@@ -105,6 +109,17 @@ function WindowedContentRow({
   const debugKey = formatDebugKey({ messageId, kind, ordinal });
 
   /**
+   * Row-local interaction pins and the interaction API for this row's subtree (§6 Q5). This is
+   * the only place in the row that adds DOM listeners, and every one of them is removed by the
+   * same hook's cleanup.
+   */
+  const { interaction, handlers } = useContentRowInteractionPins({
+    windowing,
+    token: token.current,
+    shellRef,
+  });
+
+  /**
    * Registration uses the latest props without re-registering on every prop change; later
    * changes go through `updateRow`, which is what decides whether a measurement is still
    * valid.
@@ -182,6 +197,9 @@ function WindowedContentRow({
   return (
     <div
       ref={shellRef}
+      onFocus={handlers.onFocus}
+      onBlur={handlers.onBlur}
+      onPointerDown={handlers.onPointerDown}
       className={cn('content-virtual-row', className)}
       style={state.mounted ? style : { ...style, height: `${state.height ?? 0}px` }}
       data-content-virtual-row="true"
@@ -191,11 +209,13 @@ function WindowedContentRow({
       data-content-generation={state.generation}
       data-content-height-source={state.mounted ? 'measured-element' : 'placeholder'}
     >
-      {state.mounted ? (
-        <div key={state.generation} ref={contentRef} className="content-virtual-row__measured">
-          {children}
-        </div>
-      ) : null}
+      <ContentRowInteractionProvider value={interaction}>
+        {state.mounted ? (
+          <div key={state.generation} ref={contentRef} className="content-virtual-row__measured">
+            {children}
+          </div>
+        ) : null}
+      </ContentRowInteractionProvider>
     </div>
   );
 }

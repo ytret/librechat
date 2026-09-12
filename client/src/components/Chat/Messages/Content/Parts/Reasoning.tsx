@@ -4,6 +4,7 @@ import { ContentTypes } from 'librechat-data-provider';
 import type { MouseEvent, FocusEvent } from 'react';
 import { ThinkingContent, ThinkingButton, FloatingThinkingBar } from './Thinking';
 import { useLocalize, useExpandCollapse } from '~/hooks';
+import { useExpansionTransitionPin } from '~/components/Chat/Messages/Windowing/useExpansionTransitionPin';
 import { showThinkingAtom } from '~/store/showThinking';
 import { useMessageContext } from '~/Providers';
 import { cn, formatThinkDuration } from '~/utils';
@@ -73,6 +74,7 @@ const Reasoning = memo(
     const [isBarVisible, setIsBarVisible] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const { style: expandStyle, ref: expandRef } = useExpandCollapse(isExpanded);
+    const { begin: beginTransitionPin, onTransitionEnd } = useExpansionTransitionPin();
     const { isSubmitting, isLatestMessage, nextType } = useMessageContext();
 
     // Strip <think> tags from the reasoning content (modern format)
@@ -86,13 +88,15 @@ const Reasoning = memo(
     const handleClick = useCallback(
       (e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
+        // Hold this row until the expanding element finishes its transition (§6 Q9).
+        beginTransitionPin();
         if (isControlled) {
           onExpansionChange(expansionKey, !isExpanded);
           return;
         }
         setLocalIsExpanded((previous) => !previous);
       },
-      [isControlled, onExpansionChange, expansionKey, isExpanded],
+      [beginTransitionPin, isControlled, onExpansionChange, expansionKey, isExpanded],
     );
 
     const handleFocus = useCallback(() => {
@@ -199,6 +203,7 @@ const Reasoning = memo(
             aria-hidden={!isExpanded || undefined}
             className={cn(nextType !== ContentTypes.THINK && isExpanded && 'mb-4')}
             style={expandStyle}
+            onTransitionEnd={onTransitionEnd}
           >
             <div className="relative overflow-hidden" ref={expandRef}>
               <ThinkingContent>{reasoningText}</ThinkingContent>
