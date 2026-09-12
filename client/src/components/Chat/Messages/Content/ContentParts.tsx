@@ -1,4 +1,5 @@
-import { memo, useRef, useMemo, useCallback } from 'react';
+import { memo, useRef, useMemo, useCallback, useState } from 'react';
+import { useAtomValue } from 'jotai';
 import { ContentTypes } from 'librechat-data-provider';
 import type {
   TMessageContentParts,
@@ -9,6 +10,7 @@ import type {
 import type { ToolCallGroupExpansionState } from './ToolCallGroup';
 import { ParallelContentRenderer, type PartWithIndex } from './ParallelContent';
 import { mapAttachments, groupSequentialToolCalls } from '~/utils';
+import { showThinkingAtom } from '~/store/showThinking';
 import { MessageContext, SearchContext } from '~/Providers';
 import PendingSkillCall from './Parts/PendingSkillCall';
 import { EditTextPart, EmptyText } from './Parts';
@@ -32,6 +34,27 @@ const getToolGroupId = (parts: PartWithIndex[], fallbackScope: number): string =
   return `fallback:${fallbackScope}:${firstPart.idx}`;
 };
 
+/**
+ * Stage 3 §6 Q2 — expansion state belongs to the message and the content-part index, never to
+ * the row, so it outlives a row unmount. `messageId` rather than the row token is deliberate:
+ * the provider must not own UI state, and a row token is replaced on remount.
+ */
+const expansionKeyFor = (messageId: string, idx: number): string => `${messageId}:${idx}`;
+
+/** Default expansion for each kind whose state is lifted; `undefined` for every other kind. */
+const defaultExpansionFor = (
+  part: TMessageContentParts,
+  showThinkingDefault: boolean,
+): boolean | undefined => {
+  if (part.type === ContentTypes.THINK) {
+    return showThinkingDefault;
+  }
+  if (part.type === ContentTypes.SUMMARY) {
+    return false;
+  }
+  return undefined;
+};
+
 type PartWithContextProps = {
   part: TMessageContentParts;
   idx: number;
@@ -46,6 +69,14 @@ type PartWithContextProps = {
   partAttachments: TAttachment[] | undefined;
   hideAttachments?: boolean;
   onToolExpand?: () => void;
+  /**
+   * Lifted expansion state (report 13 §6 Q2). Primitives plus one referentially stable
+   * dispatcher, so these props do not defeat the `memo` boundary: a stream token that leaves
+   * an untouched part alone cannot re-render its historical reasoning row.
+   */
+  expansionKey: string;
+  isExpanded?: boolean;
+  onExpansionChange: (expansionKey: string, isExpanded: boolean) => void;
 };
 
 const PartWithContext = memo(function PartWithContext({
@@ -62,6 +93,9 @@ const PartWithContext = memo(function PartWithContext({
   partAttachments,
   hideAttachments,
   onToolExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: PartWithContextProps) {
   const contextValue = useMemo(
     () => ({
@@ -88,6 +122,9 @@ const PartWithContext = memo(function PartWithContext({
         showCursor={isLastPart && isLast}
         hideAttachments={hideAttachments}
         onToolExpand={onToolExpand}
+        expansionKey={expansionKey}
+        isExpanded={isExpanded}
+        onExpansionChange={onExpansionChange}
       />
     </MessageContext.Provider>
   );
@@ -148,6 +185,45 @@ const ContentParts = memo(function ContentParts({
 }: ContentPartsProps) {
   const attachmentMap = useMemo(() => mapAttachments(attachments ?? []), [attachments]);
   const effectiveIsSubmitting = isLatestMessage ? isSubmitting : false;
+  const showThinking = useAtomValue(showThinkingAtom);
+  /**
+   * Lifted expansion state for reasoning and summary parts (report 13 §6 Q2). It lives here
+   * because `ContentParts` stays mounted above individual rows, so the state survives a row
+   * unmount/remount — the whole point of lifting it. The windowing provider must not own it,
+   * and it must not be reachable through row identity.
+   */
+  const [expandedParts, setExpandedParts] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map<string, boolean>(),
+  );
+  /**
+   * Referentially stable on purpose. `PartWithContext` is memoized, and an inline arrow here
+   * would change identity on every stream token and re-render every historical part.
+   */
+  const handleExpansionChange = useCallback((expansionKey: string, isExpanded: boolean) => {
+    setExpandedParts((previous) => {
+      if (previous.get(expansionKey) === isExpanded) {
+        return previous;
+      }
+      const next = new Map(previous);
+      next.set(expansionKey, isExpanded);
+      return next;
+    });
+  }, []);
+  const expansionPropsFor = useCallback(
+    (part: TMessageContentParts, idx: number) => {
+      const expansionKey = expansionKeyFor(messageId, idx);
+      const defaultExpansion = defaultExpansionFor(part, showThinking);
+      return {
+        expansionKey,
+        isExpanded:
+          defaultExpansion === undefined
+            ? undefined
+            : (expandedParts.get(expansionKey) ?? defaultExpansion),
+        onExpansionChange: handleExpansionChange,
+      };
+    },
+    [expandedParts, handleExpansionChange, messageId, showThinking],
+  );
   const toolGroupExpansionRef = useRef(new Map<string, ToolCallGroupExpansionState>());
   const fallbackScopeRef = useRef({ messageId, scope: 0 });
   if (fallbackScopeRef.current.messageId !== messageId) {
@@ -243,6 +319,7 @@ const ContentParts = memo(function ContentParts({
           nextType={content?.[idx + 1]?.type}
           isSubmitting={effectiveIsSubmitting}
           partAttachments={attachmentMap[getToolCallId(part)]}
+          {...expansionPropsFor(part, idx)}
         />
       );
     },
@@ -251,6 +328,7 @@ const ContentParts = memo(function ContentParts({
       content,
       conversationId,
       effectiveIsSubmitting,
+      expansionPropsFor,
       isCreatedByUser,
       isLast,
       isLatestMessage,
@@ -276,6 +354,7 @@ const ContentParts = memo(function ContentParts({
           partAttachments={attachmentMap[getToolCallId(part)]}
           hideAttachments
           onToolExpand={onToolExpand}
+          {...expansionPropsFor(part, idx)}
         />
       );
     },
@@ -284,6 +363,7 @@ const ContentParts = memo(function ContentParts({
       content,
       conversationId,
       effectiveIsSubmitting,
+      expansionPropsFor,
       isCreatedByUser,
       isLast,
       isLatestMessage,

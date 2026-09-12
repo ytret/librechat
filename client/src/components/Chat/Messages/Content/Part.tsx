@@ -42,6 +42,11 @@ type PartProps = {
   attachments?: TAttachment[];
   hideAttachments?: boolean;
   onToolExpand?: () => void;
+  /** Stable key of this part for the lifted expansion owner (report 13 §6 Q2). */
+  expansionKey?: string;
+  /** Lifted expansion state; `undefined` for parts that have none. */
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
 };
 
 const Part = memo(function Part({
@@ -53,6 +58,9 @@ const Part = memo(function Part({
   isCreatedByUser,
   hideAttachments,
   onToolExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: PartProps) {
   if (!part) {
     return null;
@@ -122,6 +130,9 @@ const Part = memo(function Part({
         isLast={isLast ?? false}
         thinkDuration={part.thinkDuration}
         thinkStartedAt={part.thinkStartedAt}
+        expansionKey={expansionKey}
+        isExpanded={isExpanded}
+        onExpansionChange={onExpansionChange}
       />
     );
   } else if (part.type === ContentTypes.SUMMARY) {
@@ -132,6 +143,9 @@ const Part = memo(function Part({
         provider={part.provider}
         tokenCount={part.tokenCount}
         summarizing={part.summarizing}
+        expansionKey={expansionKey}
+        isExpanded={isExpanded}
+        onExpansionChange={onExpansionChange}
       />
     );
   } else if (part.type === ContentTypes.TOOL_CALL) {
