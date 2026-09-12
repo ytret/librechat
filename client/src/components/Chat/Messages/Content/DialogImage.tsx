@@ -23,6 +23,7 @@ export default function DialogImage({
   downloadImage,
   args,
   triggerRef,
+  onPortalElement,
 }: {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -35,6 +36,13 @@ export default function DialogImage({
     [key: string]: unknown;
   };
   triggerRef?: React.RefObject<HTMLButtonElement>;
+  /**
+   * Reports the portaled content element, or null when it leaves the document. Content-row
+   * windowing registers it with the owning row so an open dialog keeps that row mounted
+   * (`ai-reports/13-stage-3-conservative-non-text-rows.md` §5 task 3.5). Must be a stable
+   * reference: React re-invokes changed callback refs. Optional, so other callers are unaffected.
+   */
+  onPortalElement?: (element: HTMLElement | null) => void;
 }) {
   const localize = useLocalize();
   const [isPromptOpen, setIsPromptOpen] = useState(false);
@@ -257,6 +265,7 @@ export default function DialogImage({
           onClick={handleBackgroundClick}
         />
         <DialogPrimitive.Content
+          ref={onPortalElement}
           className="fixed inset-0 z-[100] flex items-center justify-center outline-none"
           onOpenAutoFocus={(e) => {
             e.preventDefault();

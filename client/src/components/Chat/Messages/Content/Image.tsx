@@ -1,6 +1,7 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Skeleton } from '@librechat/client';
 import { apiBaseUrl } from 'librechat-data-provider';
+import { useContentRowPortalPin } from '~/components/Chat/Messages/Windowing/useContentRowPortalPin';
 import DialogImage from './DialogImage';
 import { cn } from '~/utils';
 
@@ -47,6 +48,23 @@ const Image = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The image dialog is portaled outside the row subtree, so the row that owns this part would
+   * otherwise be free to unmount and take the open dialog down with it. It is the first call site
+   * of the §15.2 portal pin; see `useContentRowPortalPin`.
+   */
+  const portalPin = useContentRowPortalPin();
+  const [portalElement, setPortalElement] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    // Held for as long as the dialog is open. `portalElement` arrives one commit later for the
+    // first open, which is why `acquire` is idempotent.
+    portalPin.acquire(portalElement);
+    return () => portalPin.release();
+  }, [isOpen, portalElement, portalPin]);
 
   const absoluteImageUrl = useMemo(() => {
     if (!imagePath) return imagePath;
@@ -139,6 +157,7 @@ const Image = ({
         downloadImage={downloadImage}
         args={args}
         triggerRef={triggerRef}
+        onPortalElement={setPortalElement}
       />
     </div>
   );
