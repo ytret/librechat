@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo } from 'react';
 import { useRecoilValue } from 'recoil';
 import { Tools } from 'librechat-data-provider';
 import { Globe, ChevronDown } from 'lucide-react';
@@ -6,6 +6,7 @@ import type { TAttachment, ValidSource, SearchResultData } from 'librechat-data-
 import { FaviconImage, getCleanDomain } from '~/components/Web/SourceHovercard';
 import { StackedFavicons } from '~/components/Web/Sources';
 import { useLocalize, useExpandCollapse } from '~/hooks';
+import useToolExpansion from './Parts/useToolExpansion';
 import { useSearchContext } from '~/Providers';
 import cn from '~/utils/cn';
 import store from '~/store';
@@ -83,6 +84,9 @@ export default function WebSearch({
   output,
   attachments,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   isLast?: boolean;
   isSubmitting: boolean;
@@ -90,6 +94,10 @@ export default function WebSearch({
   initialProgress: number;
   attachments?: TAttachment[];
   onExpand?: () => void;
+  /** Lifted expansion wiring, supplied by `ContentParts` through `Part` (report 13 §6 Q2). */
+  expansionKey?: string;
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
 }) {
   const localize = useLocalize();
   const { searchResults } = useSearchContext();
@@ -170,24 +178,14 @@ export default function WebSearch({
 
   const autoExpand = useRecoilValue(store.autoExpandTools);
   const sourceCount = allSources.length;
-  const [showSourceList, setShowSourceList] = useState(() => autoExpand && sourceCount > 0);
+  const { isExpanded: showSourceList, toggle: handleToggleSources } = useToolExpansion({
+    defaultExpanded: autoExpand && sourceCount > 0,
+    expansionKey,
+    isExpanded,
+    onExpansionChange,
+    onExpand,
+  });
   const { style: sourceExpandStyle, ref: sourceExpandRef } = useExpandCollapse(showSourceList);
-
-  useEffect(() => {
-    if (autoExpand && sourceCount > 0) {
-      setShowSourceList(true);
-    }
-  }, [autoExpand, sourceCount]);
-
-  const handleToggleSources = () => {
-    setShowSourceList((prev) => {
-      const next = !prev;
-      if (next) {
-        onExpand?.();
-      }
-      return next;
-    });
-  };
 
   if (cancelled) {
     return null;

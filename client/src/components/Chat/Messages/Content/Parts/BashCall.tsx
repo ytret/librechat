@@ -5,6 +5,7 @@ import ProgressText from '~/components/Chat/Messages/Content/ProgressText';
 import CopyButton from '~/components/Messages/Content/CopyButton';
 import LangIcon from '~/components/Messages/Content/LangIcon';
 import useToolCallState from './useToolCallState';
+import type { ToolCallStateExpansion } from './useToolCallState';
 import useLazyHighlight from './useLazyHighlight';
 import { ERROR_PATTERNS } from './ExecuteCode';
 import { AttachmentGroup } from './Attachment';
@@ -21,6 +22,9 @@ export default function BashCall({
   commandField = 'command',
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
@@ -30,13 +34,17 @@ export default function BashCall({
   commandField?: string;
   hideAttachments?: boolean;
   onExpand?: () => void;
-}) {
+} & ToolCallStateExpansion) {
   const localize = useLocalize();
   const command = useMemo(() => parseJsonField(args, commandField), [args, commandField]);
   const isWritingCommand = !command || !areToolCallArgsComplete(args);
 
   const { showCode, toggleCode, expandStyle, expandRef, progress, cancelled, hasError, hasOutput } =
-    useToolCallState(initialProgress, isSubmitting, output, !!command, onExpand);
+    useToolCallState(initialProgress, isSubmitting, output, !!command, onExpand, {
+      expansionKey,
+      isExpanded,
+      onExpansionChange,
+    });
 
   const highlighted = useLazyHighlight(command || undefined, 'bash');
   const outputHasError = useMemo(() => ERROR_PATTERNS.test(output), [output]);

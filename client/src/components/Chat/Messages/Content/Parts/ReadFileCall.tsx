@@ -3,6 +3,7 @@ import { FileText } from 'lucide-react';
 import type { TAttachment } from 'librechat-data-provider';
 import ProgressText from '~/components/Chat/Messages/Content/ProgressText';
 import useToolCallState from './useToolCallState';
+import type { ToolCallStateExpansion } from './useToolCallState';
 import useLazyHighlight from './useLazyHighlight';
 import CodeWindowHeader from './CodeWindowHeader';
 import { AttachmentGroup } from './Attachment';
@@ -69,6 +70,9 @@ export default function ReadFileCall({
   attachments,
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
@@ -77,14 +81,18 @@ export default function ReadFileCall({
   attachments?: TAttachment[];
   hideAttachments?: boolean;
   onExpand?: () => void;
-}) {
+} & ToolCallStateExpansion) {
   const localize = useLocalize();
   const filePath = useMemo(() => parseJsonField(args, 'file_path'), [args]);
   const fileName = filePath.split('/').pop() || filePath;
   const lang = useMemo(() => langFromPath(filePath), [filePath]);
 
   const { showCode, toggleCode, expandStyle, expandRef, progress, cancelled, hasError, hasOutput } =
-    useToolCallState(initialProgress, isSubmitting, output, !!filePath, onExpand);
+    useToolCallState(initialProgress, isSubmitting, output, !!filePath, onExpand, {
+      expansionKey,
+      isExpanded,
+      onExpansionChange,
+    });
 
   const highlighted = useLazyHighlight(hasOutput ? output : undefined, lang);
 

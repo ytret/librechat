@@ -1,8 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
 import { useRecoilValue } from 'recoil';
 import { isError } from '~/components/Chat/Messages/Content/ToolOutput';
 import { useProgress, useExpandCollapse } from '~/hooks';
+import useToolExpansion from './useToolExpansion';
 import store from '~/store';
+
+/** Lifted expansion wiring, supplied by `ContentParts` through `Part` (report 13 §6 Q2). */
+export type ToolCallStateExpansion = {
+  expansionKey?: string;
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
+};
 
 interface ToolCallState {
   showCode: boolean;
@@ -22,31 +29,23 @@ export default function useToolCallState(
   output: string,
   hasInput: boolean,
   onExpand?: () => void,
+  expansion?: ToolCallStateExpansion,
 ): ToolCallState {
   const autoExpand = useRecoilValue(store.autoExpandTools);
   const hasOutput = output.length > 0;
   const hasError = hasOutput && isError(output);
   const hasContent = hasInput || hasOutput;
 
-  const [showCode, setShowCode] = useState(() => autoExpand && hasContent);
+  const { isExpanded: showCode, toggle: toggleCode } = useToolExpansion({
+    defaultExpanded: autoExpand && hasContent,
+    expansionKey: expansion?.expansionKey,
+    isExpanded: expansion?.isExpanded,
+    onExpansionChange: expansion?.onExpansionChange,
+    onExpand,
+  });
   const { style: expandStyle, ref: expandRef } = useExpandCollapse(showCode);
 
-  useEffect(() => {
-    if (autoExpand && hasContent) {
-      setShowCode(true);
-    }
-  }, [autoExpand, hasContent]);
-
   const progress = useProgress(initialProgress);
-  const toggleCode = useCallback(() => {
-    setShowCode((prev) => {
-      const next = !prev;
-      if (next) {
-        onExpand?.();
-      }
-      return next;
-    });
-  }, [onExpand]);
   const cancelled = !isSubmitting && progress < 1 && !hasError;
 
   return {

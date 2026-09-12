@@ -4,6 +4,7 @@ import type { TAttachment } from 'librechat-data-provider';
 import ProgressText from '~/components/Chat/Messages/Content/ProgressText';
 import useLazyHighlight from './useLazyHighlight';
 import useToolCallState from './useToolCallState';
+import type { ToolCallStateExpansion } from './useToolCallState';
 import CodeWindowHeader from './CodeWindowHeader';
 import { AttachmentGroup } from './Attachment';
 import { useLocalize } from '~/hooks';
@@ -58,6 +59,9 @@ export default function ExecuteCode({
   attachments,
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
@@ -66,12 +70,16 @@ export default function ExecuteCode({
   attachments?: TAttachment[];
   hideAttachments?: boolean;
   onExpand?: () => void;
-}) {
+} & ToolCallStateExpansion) {
   const localize = useLocalize();
   const { lang = 'py', code } = useParseArgs(args) ?? ({} as ParsedArgs);
 
   const { showCode, toggleCode, expandStyle, expandRef, progress, cancelled, hasError, hasOutput } =
-    useToolCallState(initialProgress, isSubmitting, output, !!code, onExpand);
+    useToolCallState(initialProgress, isSubmitting, output, !!code, onExpand, {
+      expansionKey,
+      isExpanded,
+      onExpansionChange,
+    });
 
   const highlighted = useLazyHighlight(code, lang);
   const outputHasError = useMemo(() => ERROR_PATTERNS.test(output), [output]);

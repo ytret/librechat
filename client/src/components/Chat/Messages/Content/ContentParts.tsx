@@ -41,6 +41,20 @@ const getToolGroupId = (parts: PartWithIndex[], fallbackScope: number): string =
  */
 const expansionKeyFor = (messageId: string, idx: number): string => `${messageId}:${idx}`;
 
+/**
+ * §6 Q2 — the stable identity of one tool, so its expansion state follows the tool and not the
+ * row that draws it. The tool call id is the existing stable ID used for grouping; a tool call
+ * without an id falls back to the position-based key, exactly as reasoning and summary do.
+ */
+const toolExpansionKeyFor = (
+  messageId: string,
+  part: TMessageContentParts,
+  idx: number,
+): string => {
+  const toolCallId = getToolCallId(part);
+  return toolCallId ? `tool:${toolCallId}` : expansionKeyFor(messageId, idx);
+};
+
 /** Default expansion for each kind whose state is lifted; `undefined` for every other kind. */
 const defaultExpansionFor = (
   part: TMessageContentParts,
@@ -54,6 +68,13 @@ const defaultExpansionFor = (
   }
   return undefined;
 };
+
+/**
+ * Tool expansion is deliberately left `undefined` when the user has not touched the tool.
+ * Each tool derives its own default from the auto-expand setting and its own content, which the
+ * owner cannot know; see `useToolExpansion`.
+ */
+const isToolPart = (part: TMessageContentParts): boolean => part.type === ContentTypes.TOOL_CALL;
 
 type PartWithContextProps = {
   part: TMessageContentParts;
@@ -211,14 +232,18 @@ const ContentParts = memo(function ContentParts({
   }, []);
   const expansionPropsFor = useCallback(
     (part: TMessageContentParts, idx: number) => {
-      const expansionKey = expansionKeyFor(messageId, idx);
-      const defaultExpansion = defaultExpansionFor(part, showThinking);
+      const isTool = isToolPart(part);
+      const expansionKey = isTool
+        ? toolExpansionKeyFor(messageId, part, idx)
+        : expansionKeyFor(messageId, idx);
+      /**
+       * `undefined` for a tool the user has not touched, so the tool supplies its own default
+       * from the auto-expand setting and its own content; see `useToolExpansion`.
+       */
+      const defaultExpansion = isTool ? undefined : defaultExpansionFor(part, showThinking);
       return {
         expansionKey,
-        isExpanded:
-          defaultExpansion === undefined
-            ? undefined
-            : (expandedParts.get(expansionKey) ?? defaultExpansion),
+        isExpanded: expandedParts.get(expansionKey) ?? defaultExpansion,
         onExpansionChange: handleExpansionChange,
       };
     },

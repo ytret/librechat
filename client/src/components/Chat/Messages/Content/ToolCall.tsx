@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useRecoilValue } from 'recoil';
 import { Button } from '@librechat/client';
 import { TriangleAlert } from 'lucide-react';
@@ -10,6 +10,7 @@ import {
 } from 'librechat-data-provider';
 import type { TAttachment } from 'librechat-data-provider';
 import { useLocalize, useProgress, useExpandCollapse } from '~/hooks';
+import useToolExpansion from './Parts/useToolExpansion';
 import { ToolIcon, getToolIconType, isError } from './ToolOutput';
 import { useMCPIconMap } from '~/hooks/MCP';
 import { AttachmentGroup } from './Parts';
@@ -29,6 +30,9 @@ export default function ToolCall({
   auth,
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isLast?: boolean;
@@ -40,18 +44,22 @@ export default function ToolCall({
   auth?: string;
   hideAttachments?: boolean;
   onExpand?: () => void;
+  /** Lifted expansion wiring, supplied by `ContentParts` through `Part` (report 13 §6 Q2). */
+  expansionKey?: string;
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
 }) {
   const localize = useLocalize();
   const autoExpand = useRecoilValue(store.autoExpandTools);
   const hasOutput = (output?.length ?? 0) > 0;
-  const [showInfo, setShowInfo] = useState(() => autoExpand && hasOutput);
+  const { isExpanded: showInfo, toggle: handleToggleInfo } = useToolExpansion({
+    defaultExpanded: autoExpand && hasOutput,
+    expansionKey,
+    isExpanded,
+    onExpansionChange,
+    onExpand,
+  });
   const { style: expandStyle, ref: expandRef } = useExpandCollapse(showInfo);
-
-  useEffect(() => {
-    if (autoExpand && hasOutput) {
-      setShowInfo(true);
-    }
-  }, [autoExpand, hasOutput]);
 
   const parsedAuthUrl = useMemo(() => {
     if (!auth) {
@@ -164,16 +172,6 @@ export default function ToolCall({
 
   const progress = useProgress(initialProgress);
   const showCancelled = cancelled || (errorState && !output);
-
-  const handleToggleInfo = useCallback(() => {
-    setShowInfo((prev) => {
-      const next = !prev;
-      if (next) {
-        onExpand?.();
-      }
-      return next;
-    });
-  }, [onExpand]);
 
   const subtitle = useMemo(() => {
     if (isMCPToolCall && mcpServerName) {

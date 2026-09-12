@@ -1,21 +1,37 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { EModelEndpoint, Constants } from 'librechat-data-provider';
 import type { TMessage } from 'librechat-data-provider';
 import MessageIcon from '~/components/Share/MessageIcon';
 import { useLocalize, useExpandCollapse } from '~/hooks';
+import useToolExpansion from './Parts/useToolExpansion';
 import { useAgentsMapContext } from '~/Providers';
 import { cn } from '~/utils';
 
 interface AgentHandoffProps {
   name: string;
   args: string | Record<string, unknown>;
+  /** Lifted expansion wiring, supplied by `ContentParts` through `Part` (report 13 §6 Q2). */
+  expansionKey?: string;
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
 }
 
-const AgentHandoff: React.FC<AgentHandoffProps> = ({ name, args: _args = '' }) => {
+const AgentHandoff: React.FC<AgentHandoffProps> = ({
+  name,
+  args: _args = '',
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
+}) => {
   const localize = useLocalize();
   const agentsMap = useAgentsMapContext();
-  const [showInfo, setShowInfo] = useState(false);
+  const { isExpanded: showInfo, toggle: handleToggleInfo } = useToolExpansion({
+    defaultExpanded: false,
+    expansionKey,
+    isExpanded,
+    onExpansionChange,
+  });
   const { style: expandStyle, ref: expandRef } = useExpandCollapse(showInfo);
 
   const targetAgentId = useMemo(() => {
@@ -56,7 +72,7 @@ const AgentHandoff: React.FC<AgentHandoffProps> = ({ name, args: _args = '' }) =
             : 'pointer-events-none',
         )}
         disabled={!hasInfo}
-        onClick={hasInfo ? () => setShowInfo(!showInfo) : undefined}
+        onClick={hasInfo ? handleToggleInfo : undefined}
         aria-expanded={hasInfo ? showInfo : undefined}
         aria-label={`${localize('com_ui_transferred_to')} ${targetAgent?.name || localize('com_ui_agent')}`}
       >

@@ -155,6 +155,13 @@ const Part = memo(function Part({
       return null;
     }
 
+    /**
+     * Lifted expansion wiring for one individual tool (report 13 §6 Q2, task 3.3). Spread into
+     * every tool element below so each tool's toggle survives the unmount of the row that
+     * carries it. Tool rows are always-mounted in Stage 3, so nothing unmounts yet.
+     */
+    const toolExpansionProps = { expansionKey, isExpanded, onExpansionChange };
+
     const isToolCall =
       'args' in toolCall && (!toolCall.type || toolCall.type === ToolCallTypes.TOOL_CALL);
     if (isToolCall && isBashProgrammaticToolCall(toolCall.name, toolCall.args)) {
@@ -168,6 +175,7 @@ const Part = memo(function Part({
           commandField="code"
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (
@@ -185,6 +193,7 @@ const Part = memo(function Part({
           args={toolCall.args}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (
@@ -214,6 +223,7 @@ const Part = memo(function Part({
           attachments={attachments}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && toolCall.name === Constants.SUBAGENT) {
@@ -250,6 +260,7 @@ const Part = memo(function Part({
           attachments={attachments}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && (toolCall.name === 'create_file' || toolCall.name === 'edit_file')) {
@@ -263,6 +274,7 @@ const Part = memo(function Part({
           attachments={attachments}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && toolCall.name === Tools.bash_tool) {
@@ -275,6 +287,7 @@ const Part = memo(function Part({
           attachments={attachments}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && toolCall.name === Tools.web_search) {
@@ -286,6 +299,7 @@ const Part = memo(function Part({
           attachments={attachments}
           isLast={isLast}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && (toolCall.name === 'file_search' || toolCall.name === 'retrieval')) {
@@ -296,10 +310,17 @@ const Part = memo(function Part({
           output={toolCall.output ?? undefined}
           attachments={attachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (isToolCall && toolCall.name?.startsWith(Constants.LC_TRANSFER_TO_)) {
-      return <AgentHandoff args={toolCall.args ?? ''} name={toolCall.name || ''} />;
+      return (
+        <AgentHandoff
+          args={toolCall.args ?? ''}
+          name={toolCall.name || ''}
+          {...toolExpansionProps}
+        />
+      );
     } else if (isToolCall) {
       return (
         <ToolCall
@@ -313,6 +334,7 @@ const Part = memo(function Part({
           isLast={isLast}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (toolCall.type === ToolCallTypes.CODE_INTERPRETER) {
@@ -336,6 +358,7 @@ const Part = memo(function Part({
           output={(toolCall as { output?: string }).output}
           attachments={attachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     } else if (
@@ -374,6 +397,7 @@ const Part = memo(function Part({
           isLast={isLast}
           hideAttachments={hideAttachments}
           onExpand={onToolExpand}
+          {...toolExpansionProps}
         />
       );
     }

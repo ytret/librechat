@@ -1,10 +1,11 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { useRecoilValue } from 'recoil';
 import { Tools } from 'librechat-data-provider';
 import { TooltipAnchor } from '@librechat/client';
 import { FileText, FileSpreadsheet, FileCode, FileImage, File } from 'lucide-react';
 import type { TAttachment, TFile } from 'librechat-data-provider';
 import { useLocalize, useProgress, useExpandCollapse } from '~/hooks';
+import useToolExpansion from './Parts/useToolExpansion';
 import { ToolIcon, OutputRenderer, isError } from './ToolOutput';
 import FilePreviewDialog from './FilePreviewDialog';
 import { sortPagesByRelevance, cn } from '~/utils';
@@ -327,12 +328,19 @@ export default function RetrievalCall({
   output,
   attachments,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
   output?: string;
   attachments?: TAttachment[];
   onExpand?: () => void;
+  /** Lifted expansion wiring, supplied by `ContentParts` through `Part` (report 13 §6 Q2). */
+  expansionKey?: string;
+  isExpanded?: boolean;
+  onExpansionChange?: (expansionKey: string, isExpanded: boolean) => void;
 }) {
   const progress = useProgress(initialProgress);
   const localize = useLocalize();
@@ -341,7 +349,13 @@ export default function RetrievalCall({
   const cancelled = !isSubmitting && initialProgress < 1 && !errorState;
   const hasOutput = !!output && !isError(output);
   const autoExpand = useRecoilValue(store.autoExpandTools);
-  const [showOutput, setShowOutput] = useState(() => autoExpand && hasOutput);
+  const { isExpanded: showOutput, toggle: handleToggleOutput } = useToolExpansion({
+    defaultExpanded: autoExpand && hasOutput,
+    expansionKey,
+    isExpanded,
+    onExpansionChange,
+    onExpand,
+  });
   const { style: expandStyle, ref: expandRef } = useExpandCollapse(showOutput);
 
   const fileSources = useMemo(() => extractFileSources(attachments), [attachments]);
@@ -395,22 +409,6 @@ export default function RetrievalCall({
       fileType: result.fileType,
     };
   }, [displayResults, previewIndex]);
-
-  useEffect(() => {
-    if (autoExpand && hasOutput) {
-      setShowOutput(true);
-    }
-  }, [autoExpand, hasOutput]);
-
-  const handleToggleOutput = useCallback(() => {
-    setShowOutput((prev) => {
-      const next = !prev;
-      if (next) {
-        onExpand?.();
-      }
-      return next;
-    });
-  }, [onExpand]);
 
   return (
     <div className="my-1">

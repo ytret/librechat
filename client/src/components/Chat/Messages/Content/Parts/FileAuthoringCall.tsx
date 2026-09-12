@@ -4,6 +4,7 @@ import type { TAttachment } from 'librechat-data-provider';
 import parseJsonField, { parseJsonFieldOccurrences } from './parseJsonField';
 import ProgressText from '~/components/Chat/Messages/Content/ProgressText';
 import useToolCallState from './useToolCallState';
+import type { ToolCallStateExpansion } from './useToolCallState';
 import useLazyHighlight from './useLazyHighlight';
 import CodeWindowHeader from './CodeWindowHeader';
 import { AttachmentGroup } from './Attachment';
@@ -111,6 +112,9 @@ export default function FileAuthoringCall({
   attachments,
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   toolName: FileAuthoringToolName;
   initialProgress: number;
@@ -120,7 +124,7 @@ export default function FileAuthoringCall({
   attachments?: TAttachment[];
   hideAttachments?: boolean;
   onExpand?: () => void;
-}) {
+} & ToolCallStateExpansion) {
   const localize = useLocalize();
   const isCreate = toolName === 'create_file';
   /** `create_file` can overwrite an existing file (sandbox `overwrite: true`,
@@ -146,7 +150,11 @@ export default function FileAuthoringCall({
   }
 
   const { showCode, toggleCode, expandStyle, expandRef, progress, cancelled, hasError } =
-    useToolCallState(initialProgress, isSubmitting, output, !!filePath || !!preview, onExpand);
+    useToolCallState(initialProgress, isSubmitting, output, !!filePath || !!preview, onExpand, {
+      expansionKey,
+      isExpanded,
+      onExpansionChange,
+    });
 
   const highlighted = useLazyHighlight(preview || undefined, previewLang);
   const Icon = isCreate && !overwrote ? FilePlus2 : FilePenLine;

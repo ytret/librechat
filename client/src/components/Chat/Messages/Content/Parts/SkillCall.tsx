@@ -3,6 +3,7 @@ import { ScrollText } from 'lucide-react';
 import type { TAttachment } from 'librechat-data-provider';
 import ProgressText from '~/components/Chat/Messages/Content/ProgressText';
 import useToolCallState from './useToolCallState';
+import type { ToolCallStateExpansion } from './useToolCallState';
 import { AttachmentGroup } from './Attachment';
 import parseJsonField from './parseJsonField';
 import { useLocalize } from '~/hooks';
@@ -17,6 +18,9 @@ export default function SkillCall({
   attachments,
   hideAttachments = false,
   onExpand,
+  expansionKey,
+  isExpanded,
+  onExpansionChange,
 }: {
   initialProgress: number;
   isSubmitting: boolean;
@@ -25,12 +29,16 @@ export default function SkillCall({
   attachments?: TAttachment[];
   hideAttachments?: boolean;
   onExpand?: () => void;
-}) {
+} & ToolCallStateExpansion) {
   const localize = useLocalize();
   const skillName = useMemo(() => parseJsonField(args, 'skillName'), [args]);
 
   const { showCode, toggleCode, expandStyle, expandRef, progress, cancelled, hasError, hasOutput } =
-    useToolCallState(initialProgress, isSubmitting, output, !!skillName, onExpand);
+    useToolCallState(initialProgress, isSubmitting, output, !!skillName, onExpand, {
+      expansionKey,
+      isExpanded,
+      onExpansionChange,
+    });
 
   return (
     <>
