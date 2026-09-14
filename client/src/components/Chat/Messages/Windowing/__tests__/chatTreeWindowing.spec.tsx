@@ -161,7 +161,7 @@ const renderTree = (tree: React.ReactNode) => {
   return result;
 };
 
-function DefaultPolicyTree() {
+function DefaultPolicyTree({ row }: { row: React.ReactNode }) {
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const pinnedToBottomRef = React.useRef(false);
   return (
@@ -172,9 +172,7 @@ function DefaultPolicyTree() {
         pinnedToBottomRef={pinnedToBottomRef}
       >
         <Probe />
-        <VirtualizedContentRow messageId="m1" kind="reasoning" sourceKey={0}>
-          <div data-testid="body">{'body'}</div>
-        </VirtualizedContentRow>
+        {row}
       </ContentRowWindowingProvider>
     </div>
   );
@@ -246,18 +244,81 @@ describe('a row without a provider', () => {
   });
 });
 
-describe('VirtualizedContentRow default policy', () => {
-  it('still defaults to windowed when a call site omits the policy', () => {
-    /**
-     * Guards the trap recorded in report 13 §13.1: the row defaults `policy` to `windowed`, so a
-     * call site that omits the prop windows a row the allow-list never approved. Production always
-     * passes the classifier's verdict through `ContentPartRow`; this pins the default so a change
-     * to it is a deliberate decision rather than an accident.
-     */
+describe('an undeclared row policy', () => {
+  /**
+   * Supervisor decision D1: `policy` is a required prop and an omitted or unrecognized value falls
+   * back to `always-mounted`. The Stage 3 policy is an allow-list, so a row that does not declare
+   * what it is may never window — the previous `'windowed'` default silently violated that.
+   */
+  it('cannot register as windowed when the policy is undefined', () => {
     setContentRowWindowingEnabled(true, { isDevelopment: true });
-    renderTree(<DefaultPolicyTree />);
+    renderTree(
+      <DefaultPolicyTree
+        row={
+          <VirtualizedContentRow messageId="m1" kind="reasoning" sourceKey={0} policy={undefined}>
+            <div data-testid="body">{'body'}</div>
+          </VirtualizedContentRow>
+        }
+      />,
+    );
 
-    expect(rowShells()).toBe(1);
+    expect(api?.getDiagnostics().alwaysMountedRows).toBe(1);
+    expect(api?.getDiagnostics().placeholderRows).toBe(0);
+  });
+
+  it('cannot register as windowed when a JavaScript caller omits the prop entirely', () => {
+    setContentRowWindowingEnabled(true, { isDevelopment: true });
+    const RowWithoutPolicy = VirtualizedContentRow as unknown as React.ComponentType<
+      Record<string, unknown>
+    >;
+    renderTree(
+      <DefaultPolicyTree
+        row={
+          <RowWithoutPolicy messageId="m1" kind="reasoning" sourceKey={0}>
+            <div data-testid="body">{'body'}</div>
+          </RowWithoutPolicy>
+        }
+      />,
+    );
+
+    expect(api?.getDiagnostics().alwaysMountedRows).toBe(1);
+    expect(api?.getDiagnostics().placeholderRows).toBe(0);
+  });
+
+  it('cannot register as windowed when the policy is not a known value', () => {
+    setContentRowWindowingEnabled(true, { isDevelopment: true });
+    renderTree(
+      <DefaultPolicyTree
+        row={
+          <VirtualizedContentRow
+            messageId="m1"
+            kind="reasoning"
+            sourceKey={0}
+            policy={'sometimes' as unknown as 'windowed'}
+          >
+            <div data-testid="body">{'body'}</div>
+          </VirtualizedContentRow>
+        }
+      />,
+    );
+
+    expect(api?.getDiagnostics().alwaysMountedRows).toBe(1);
+    expect(api?.getDiagnostics().placeholderRows).toBe(0);
+  });
+
+  it('still honours an explicitly declared windowed policy', () => {
+    setContentRowWindowingEnabled(true, { isDevelopment: true });
+    renderTree(
+      <DefaultPolicyTree
+        row={
+          <VirtualizedContentRow messageId="m1" kind="reasoning" sourceKey={0} policy="windowed">
+            <div data-testid="body">{'body'}</div>
+          </VirtualizedContentRow>
+        }
+      />,
+    );
+
+    expect(api?.getDiagnostics().alwaysMountedRows).toBe(0);
     expect(api?.getDiagnostics().totalByKind.reasoning).toBe(1);
   });
 });

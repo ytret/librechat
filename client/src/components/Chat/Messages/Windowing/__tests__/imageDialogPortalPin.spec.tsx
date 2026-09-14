@@ -89,7 +89,13 @@ function Harness({ children }: { children?: React.ReactNode }) {
 }
 
 const imageRow = (
-  <VirtualizedContentRow messageId="m1" kind="image" sourceKey={0} ordinal={0}>
+  <VirtualizedContentRow
+    messageId="m1"
+    kind="image"
+    sourceKey={0}
+    ordinal={0}
+    policy="always-mounted"
+  >
     <Image imagePath="/images/test.png" altText="Test image" width={800} height={600} />
   </VirtualizedContentRow>
 );

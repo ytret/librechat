@@ -110,6 +110,7 @@ const row = (
     kind="markdown"
     sourceKey={0}
     ordinal={0}
+    policy="windowed"
     {...overrides}
     key={overrides.key}
   >

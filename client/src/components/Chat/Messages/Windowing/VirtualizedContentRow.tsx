@@ -38,7 +38,13 @@ export type VirtualizedContentRowProps = {
   stateKey?: string | number | boolean | null;
   /** Optional hash of the content itself, for sources that can change in place. */
   contentKey?: string;
-  policy?: ContentRowPolicy;
+  /**
+   * Required, and deliberately so. The Stage 3 policy is an allow-list, so a row that does not say
+   * what it is may never window: an omitted or non-union value is treated at runtime as
+   * `always-mounted` (report 13 §13.1, supervisor decision D1). Making it required is what stops a
+   * future call site from silently opting into windowing by forgetting a prop.
+   */
+  policy: ContentRowPolicy | undefined;
   forceMounted?: boolean;
   /**
    * Hold this row mounted for a reason while set (§7.2). Pinning is the caller's decision —
@@ -80,6 +86,31 @@ export function VirtualizedContentRow(props: VirtualizedContentRowProps) {
   return <WindowedContentRow {...props} windowing={windowing} />;
 }
 
+/**
+ * The policy actually registered. An omitted or unrecognized value falls back to `always-mounted`,
+ * and a `unstable-until-settled` source becomes `windowed` only once its content reports ready —
+ * and is kept mounted outright if it reports failure. Every other policy passes through unchanged,
+ * so `always-mounted` content is never promoted by a readiness signal it should not have received.
+ */
+function resolveRowPolicy(
+  policy: ContentRowPolicy | undefined,
+  readinessStatus: 'pending' | 'ready' | 'failed',
+): ContentRowPolicy {
+  if (policy !== 'windowed' && policy !== 'unstable-until-settled') {
+    return 'always-mounted';
+  }
+  if (policy === 'windowed') {
+    return 'windowed';
+  }
+  if (readinessStatus === 'ready') {
+    return 'windowed';
+  }
+  if (readinessStatus === 'failed') {
+    return 'always-mounted';
+  }
+  return 'unstable-until-settled';
+}
+
 function WindowedContentRow({
   messageId,
   kind,
@@ -87,7 +118,7 @@ function WindowedContentRow({
   ordinal = 0,
   stateKey,
   contentKey,
-  policy = 'windowed',
+  policy,
   forceMounted = false,
   pinReason,
   className,
@@ -145,19 +176,13 @@ function WindowedContentRow({
   }, []);
 
   /**
-   * The policy actually registered: a `unstable-until-settled` source becomes `windowed` only once
-   * its content reports ready, and is kept mounted outright if it reports failure. Every other
-   * policy is passed through unchanged, so `always-mounted` content is never promoted by a
-   * readiness signal it should not have received.
+   * The policy actually registered: an omitted or unrecognized value falls back to
+   * `always-mounted`, and a `unstable-until-settled` source becomes `windowed` only once its
+   * content reports ready (and is kept mounted outright if it reports failure). Every other policy
+   * is passed through unchanged, so `always-mounted` content is never promoted by a readiness
+   * signal it should not have received.
    */
-  const resolvedPolicy: ContentRowPolicy =
-    policy !== 'unstable-until-settled'
-      ? policy
-      : readinessStatus === 'ready'
-        ? 'windowed'
-        : readinessStatus === 'failed'
-          ? 'always-mounted'
-          : 'unstable-until-settled';
+  const resolvedPolicy = resolveRowPolicy(policy, readinessStatus);
 
   const interaction = useMemo<ContentRowInteraction>(
     () => ({ ...pins, reportReady, reportFailed }),

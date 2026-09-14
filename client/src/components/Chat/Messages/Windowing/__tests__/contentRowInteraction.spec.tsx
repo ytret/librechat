@@ -126,7 +126,14 @@ const row = (
   children: React.ReactNode,
   overrides: Partial<React.ComponentProps<typeof VirtualizedContentRow>> = {},
 ) => (
-  <VirtualizedContentRow messageId="m1" kind="reasoning" sourceKey={0} ordinal={0} {...overrides}>
+  <VirtualizedContentRow
+    messageId="m1"
+    kind="reasoning"
+    sourceKey={0}
+    ordinal={0}
+    policy="windowed"
+    {...overrides}
+  >
     {children}
   </VirtualizedContentRow>
 );
