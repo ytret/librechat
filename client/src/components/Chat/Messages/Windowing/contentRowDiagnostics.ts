@@ -579,11 +579,29 @@ export function createContentRowDiagnostics(): ContentRowDiagnosticsCollector {
   };
 }
 
+/**
+ * Structural view of the development-only per-frame visibility sampler
+ * (`dev/frameVisibilitySampler`). Declared here rather than imported so this module — which is in
+ * the shipped graph — never depends on the dev folder at runtime.
+ */
+export type ContentRowVisibilitySampler = {
+  start: (pane: HTMLElement | null, seconds?: number) => string;
+  stop: (print?: boolean) => string;
+};
+
 declare global {
   interface Window {
     __lcContentRows?: {
       snapshot: () => ContentRowDiagnosticsSnapshot;
       reset: () => void;
+      /**
+       * Development-only: start the per-frame visibility sampler over the chat's scroll pane, the
+       * instrument the hard-fling coverage bar is measured with (report 13 §14.5). Returns a
+       * one-line status, so a console `console.log(...)` shows it.
+       */
+      sample: (seconds?: number) => string;
+      /** Stop early and print the summary collected so far. */
+      sampleStop: () => string;
     };
   }
 }
@@ -593,15 +611,31 @@ export type InstallContentRowDiagnosticsOptions = {
   isDevelopment?: boolean;
   /** Live registry state, supplied by the provider. */
   getLive: () => ContentRowDiagnosticsLive;
+  /**
+   * The dev-only sampler, supplied by the provider once its module has been loaded. Absent in
+   * production and on any page that hosts no scroll pane of its own.
+   */
+  getVisibilitySampler?: () => ContentRowVisibilitySampler | null;
+  /** The pane the sampler reads. Resolved per call, so a replaced root is picked up. */
+  getScrollPane?: () => HTMLElement | null;
 };
 
 /**
  * Expose the collector on `window` for console use. Returns an uninstall function.
  * Production builds install nothing, so nothing here can leak in a release.
  */
+const NO_SAMPLER =
+  'no visibility sampler on this page — it needs a development build with the ' +
+  'windowing flag on (lc:content-row-windowing), or the /dev/content-rows fixture';
+
 export function installContentRowDiagnostics(
   collector: ContentRowDiagnosticsCollector,
-  { isDevelopment = import.meta.env.DEV, getLive }: InstallContentRowDiagnosticsOptions,
+  {
+    isDevelopment = import.meta.env.DEV,
+    getLive,
+    getVisibilitySampler,
+    getScrollPane,
+  }: InstallContentRowDiagnosticsOptions,
 ): () => void {
   if (!isDevelopment || typeof window === 'undefined') {
     return () => {};
@@ -609,6 +643,17 @@ export function installContentRowDiagnostics(
   const handle = {
     snapshot: () => collector.snapshot(getLive()),
     reset: () => collector.reset(),
+    sample: (seconds?: number) => {
+      const sampler = getVisibilitySampler?.() ?? null;
+      if (!sampler) {
+        return NO_SAMPLER;
+      }
+      return sampler.start(getScrollPane?.() ?? null, seconds);
+    },
+    sampleStop: () => {
+      const sampler = getVisibilitySampler?.() ?? null;
+      return sampler ? sampler.stop(true) : NO_SAMPLER;
+    },
   };
   window.__lcContentRows = handle;
   return () => {

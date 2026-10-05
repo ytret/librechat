@@ -1,6 +1,6 @@
 import React from 'react';
 import { RecoilRoot } from 'recoil';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import type { TMessage } from 'librechat-data-provider';
 import {
   resetContentRowWindowingEnabledForTests,
@@ -189,5 +189,21 @@ describe('MessagesView hosting', () => {
 
     expect(MockIntersectionObserver.instances).toHaveLength(0);
     expect(MockResizeObserver.instances).toHaveLength(0);
+  });
+
+  /**
+   * Report 13 §14.5: the hard-fling coverage bar is measured from this page, through the chat
+   * handle rather than the fixture's. `MessagesView` assigns its own scroll container to
+   * `scrollableRef` through the ref callback, so the sampler starting successfully here also
+   * proves it was handed the chat's pane: a null root would answer "no scroll pane". The module is
+   * imported lazily, so the first calls answer with the loading stub instead.
+   */
+  it('exposes the per-frame visibility sampler on the chat handle, over the chat pane', async () => {
+    setContentRowWindowingEnabled(true, { isDevelopment: true });
+    renderView();
+
+    expect(typeof window.__lcContentRows?.sample).toBe('function');
+    await waitFor(() => expect(window.__lcContentRows?.sample(1)).toContain('sampling for 1s'));
+    expect(window.__lcContentRows?.sampleStop()).toContain('sampling stopped');
   });
 });

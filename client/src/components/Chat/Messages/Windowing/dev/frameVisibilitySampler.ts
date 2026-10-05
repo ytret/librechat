@@ -1,6 +1,10 @@
 /**
  * Development-only per-frame visibility sampler for the Stage 2 browser gate.
  *
+ * Reached two ways, both development-only: the fixture's `__lcRows` handle, and the chat's
+ * `__lcContentRows.sample()` / `.sampleStop()` (report 13 §14.5 — the hard-fling coverage bar is
+ * measured in the real chat).
+ *
  * Spec: `ai-reports/09-content-row-dom-windowing-spec.md` §22.1 ("no blank row entering the
  * viewport"). Context: `ai-reports/12-stage-2-provider-infrastructure.md` §12.8, where the
  * provider's own counters read zero while the reader still saw blank frames.
@@ -326,7 +330,7 @@ export function formatFrameVisibilitySummary(summary: FrameVisibilitySummary): s
   const channel = (phase: FrameVisibilityPhase) =>
     summary.channels.find((entry) => entry.phase === phase) as FrameVisibilityChannelSummary;
 
-  lines.push('===== per-frame visibility sample (dev fixture) =====');
+  lines.push('===== per-frame visibility sample (development build) =====');
   lines.push(
     'span       ' +
       Math.round(summary.spanMs) +
@@ -532,10 +536,10 @@ export function createFrameVisibilitySampler(
 
   function start(pane: HTMLElement | null, seconds = 20): string {
     if (!pane) {
-      return 'no scroll pane on this page — is this /dev/content-rows?';
+      return "no scroll pane on this page — the sampler needs the chat's scroll container or the fixture's scroll pane";
     }
     if (frame != null || autoStop != null) {
-      return 'already sampling — call __lcRows.sampleStop() first';
+      return 'already sampling — call sampleStop() first';
     }
     collected = [];
     frameIndex = 0;

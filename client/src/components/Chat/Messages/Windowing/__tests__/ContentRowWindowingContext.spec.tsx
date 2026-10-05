@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import {
   ContentRowWindowingProvider,
   UNKNOWN_LAYOUT_BUCKET,
@@ -462,6 +462,23 @@ describe('ContentRowWindowingProvider diagnostics handle', () => {
       </Harness>,
     );
     expect(window.__lcContentRows).toBeUndefined();
+  });
+
+  /**
+   * Report 13 §14.5: the hard-fling coverage bar is measured in the chat, so the provider's own
+   * scroll pane — not the fixture's — is what the sampler must read. The real sampler answers
+   * "sampling for 1s" only when it was handed a pane; a null root answers "no scroll pane".
+   */
+  it('hands the dev-only visibility sampler the provider scroll pane', async () => {
+    render(
+      <Harness isDevelopment onReady={(value) => (api = value)}>
+        <Row messageId="m1" />
+      </Harness>,
+    );
+
+    // The sampler module is imported lazily, so the first calls answer with the loading stub.
+    await waitFor(() => expect(window.__lcContentRows?.sample(1)).toContain('sampling for 1s'));
+    expect(window.__lcContentRows?.sampleStop()).toContain('sampling stopped');
   });
 });
 

@@ -28,6 +28,7 @@ import {
   createContentRowDiagnostics,
   createLiveDiagnosticsState,
   installContentRowDiagnostics,
+  type ContentRowVisibilitySampler,
 } from './contentRowDiagnostics';
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
 import { isOversizedRowHeight } from './contentRowPolicy';
@@ -216,6 +217,15 @@ export const UNKNOWN_LAYOUT_BUCKET: LayoutBucket = computeLayoutBucket({
 export const ContentRowWindowingContext = createContext<ContentRowWindowingRuntime | null>(null);
 
 /**
+ * Answers a console call made before the dev-only sampler module has loaded. A single module-level
+ * constant, so the stub has one identity across renders and its messages are greppable.
+ */
+const CONTENT_ROW_SAMPLER_LOADING: ContentRowVisibilitySampler = {
+  start: () => 'the visibility sampler module is still loading — run the command again in a moment',
+  stop: () => 'the visibility sampler module is still loading — nothing to stop',
+};
+
+/**
  * Layout bucket for a scroll root (§12): container width bucket, font-size bucket,
  * and rendering mode. Null when there is no root to measure yet.
  */
@@ -297,6 +307,13 @@ export function ContentRowWindowingProvider({
   const byMessageId = useRef(new Map<string, Set<ContentRowRecord>>());
   const mountedElements = useRef(new WeakMap<Element, MountedElementMapping>());
   const diagnostics = useRef(createContentRowDiagnostics());
+  /**
+   * Development-only per-frame visibility sampler (report 13 §14.5): the instrument the
+   * hard-fling coverage bar is measured with in the real chat. Holds the stub below until the
+   * lazily imported module lands, so a console call made in the first moments after load gets a
+   * "still loading" answer rather than a misleading "not wired" one.
+   */
+  const visibilitySampler = useRef<ContentRowVisibilitySampler>(CONTENT_ROW_SAMPLER_LOADING);
   const layoutBucket = useRef<LayoutBucket | null>(null);
   const conversationRef = useRef<string | null>(conversationId ?? null);
   const resizeObserver = useRef<ResizeObserver | undefined>(undefined);
@@ -1879,10 +1896,50 @@ export function ContentRowWindowingProvider({
     };
   }, [conversationId, effectiveLeadPx, scrollRootRef]);
 
+  /**
+   * Load the dev-only per-frame visibility sampler and keep it valid for one conversation.
+   *
+   * Two reasons this is an effect rather than a plain import. The module must not reach the release
+   * bundle, so it is imported lazily and only in development. And the sampler's `late` channel is
+   * only correct while its own scroll listener is registered *after* the provider's: its
+   * `requestAnimationFrame` is then queued behind the pass the provider's handler scheduled, so it
+   * reads the state this frame will paint. The provider's listener effect re-registers on a
+   * conversation change, which would place it after a still-running sampler and silently invert
+   * that ordering, so a conversation change stops sampling instead.
+   */
+  useEffect(() => {
+    if (!isDevelopment) {
+      return;
+    }
+    let cancelled = false;
+    visibilitySampler.current = CONTENT_ROW_SAMPLER_LOADING;
+    /**
+     * Guarded on the build-time flag *and* the injectable one. `import.meta.env.DEV` is a literal
+     * in a production build, so this branch is dropped there and the module is never emitted as a
+     * chunk — the same reason `routes/index.tsx` excludes the fixture route. `isDevelopment` alone
+     * cannot be proven false at build time, so the chunk would ship and be precached for nothing.
+     */
+    if (import.meta.env.DEV) {
+      void import('./dev/frameVisibilitySampler').then(({ createFrameVisibilitySampler }) => {
+        if (cancelled) {
+          return;
+        }
+        visibilitySampler.current = createFrameVisibilitySampler();
+      });
+    }
+    return () => {
+      cancelled = true;
+      visibilitySampler.current.stop(false);
+      visibilitySampler.current = CONTENT_ROW_SAMPLER_LOADING;
+    };
+  }, [isDevelopment, conversationId]);
+
   // Development-only console handle (§23). Production installs nothing.
   useEffect(() => {
     return installContentRowDiagnostics(diagnostics.current, {
       isDevelopment,
+      getVisibilitySampler: () => visibilitySampler.current,
+      getScrollPane: () => scrollRootRef.current ?? null,
       getLive: () =>
         createLiveDiagnosticsState(rows.current.values(), {
           layoutBucket: layoutBucket.current,
@@ -1891,7 +1948,7 @@ export function ContentRowWindowingProvider({
           settlementDeadlineRows: settlementDeadlines.current.size,
         }),
     });
-  }, [currentReflowState, isDevelopment]);
+  }, [currentReflowState, isDevelopment, scrollRootRef]);
 
   /**
    * A conversation change must not let a reused component position keep a height

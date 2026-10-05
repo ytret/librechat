@@ -343,9 +343,45 @@ describe('installContentRowDiagnostics', () => {
     const uninstall = installContentRowDiagnostics(collector, {
       isDevelopment: false,
       getLive: live,
+      getVisibilitySampler: () => ({
+        start: () => 'sampling',
+        stop: () => 'stopped',
+      }),
     });
     expect(window.__lcContentRows).toBeUndefined();
+    expect(window.__lcContentRows?.sample).toBeUndefined();
     expect(() => uninstall()).not.toThrow();
+  });
+
+  /**
+   * Report 13 §14.5: the hard-fling coverage bar is measured with the per-frame visibility
+   * sampler, which the chat exposes on this handle. The pane is read per call, so a replaced
+   * scroll root cannot leave the sampler reading a detached element.
+   */
+  it('exposes the visibility sampler over the pane the caller supplies', () => {
+    const collector = createContentRowDiagnostics();
+    const pane = document.createElement('div');
+    const start = jest.fn(() => 'sampling for 20s');
+    const stop = jest.fn(() => 'sampling stopped');
+    installContentRowDiagnostics(collector, {
+      isDevelopment: true,
+      getLive: live,
+      getVisibilitySampler: () => ({ start, stop }),
+      getScrollPane: () => pane,
+    });
+
+    expect(window.__lcContentRows?.sample(20)).toBe('sampling for 20s');
+    expect(start).toHaveBeenCalledWith(pane, 20);
+    expect(window.__lcContentRows?.sampleStop()).toBe('sampling stopped');
+    expect(stop).toHaveBeenCalledWith(true);
+  });
+
+  it('says the sampler is absent rather than throwing when none is wired', () => {
+    const collector = createContentRowDiagnostics();
+    installContentRowDiagnostics(collector, { isDevelopment: true, getLive: live });
+
+    expect(window.__lcContentRows?.sample()).toMatch(/no visibility sampler/);
+    expect(window.__lcContentRows?.sampleStop()).toMatch(/no visibility sampler/);
   });
 
   it('uninstall only clears the handle when it is still the active one', () => {
