@@ -1227,6 +1227,7 @@ export function ContentRowWindowingProvider({
         debugKey: registration.debugKey,
         kind: registration.kind,
         fingerprint: registration.fingerprint,
+        identityFingerprint: registration.identityFingerprint,
         measuredFingerprint: registration.fingerprint,
         policy: registration.policy,
         shellElement: registration.shellElement,
@@ -1269,33 +1270,6 @@ export function ContentRowWindowingProvider({
       };
     },
     [beginMeasurementWork, currentBucket, indexByMessage, maybeCompleteWarmUp, unregisterRow],
-  );
-
-  const updateRow = useCallback(
-    (token: ContentRowToken, update: ContentRowUpdate) => {
-      const record = rows.current.get(token);
-      if (!record) {
-        return;
-      }
-      if (update.messageId !== undefined && update.messageId !== record.messageId) {
-        unindexByMessage(record);
-        record.messageId = update.messageId;
-        indexByMessage(record);
-      }
-      if (update.debugKey !== undefined) {
-        record.debugKey = update.debugKey;
-      }
-      if (update.policy !== undefined && update.policy !== record.policy) {
-        applyPolicyChange(record, update.policy);
-      }
-      if (update.forceMounted !== undefined) {
-        record.forceMounted = update.forceMounted;
-      }
-      if (update.fingerprint !== undefined && update.fingerprint !== record.fingerprint) {
-        startGeneration(record, update.fingerprint);
-      }
-    },
-    [applyPolicyChange, indexByMessage, startGeneration, unindexByMessage],
   );
 
   const getLayoutBucket = useCallback(() => currentBucket(), [currentBucket]);
@@ -1395,6 +1369,74 @@ export function ContentRowWindowingProvider({
       );
     },
     [reportMountedContentHeight],
+  );
+
+  /**
+   * Take a row's post-registration updates. A `fingerprint` change is either a new source or the
+   * same source at a new size, and the two need different remedies:
+   *
+   * - **New source** (`identityFingerprint` also changed, or either side cannot supply one):
+   *   `startGeneration` re-keys the measured element so the row re-measures from scratch (§7.5).
+   * - **Same source, new geometry** — expansion state, a streaming revision, a rendering mode:
+   *   the element is kept. The stale height is dropped and the mounted element re-measured in
+   *   place, never left unmeasured, because a row that never re-measures never settles and so can
+   *   never become a placeholder again.
+   *
+   * Re-keying on the second case was the expansion defect: it unmounted the element carrying the
+   * `grid-template-rows` transition, so the expansion could not animate, and it destroyed the
+   * toggle button that held keyboard focus. Expansion state stays in `fingerprint` (§12) — it is
+   * measurement validity, not source identity.
+   *
+   * Defined here, after `remeasureRow`, because it re-measures through it; that is the same pair
+   * `notifyLayoutChange` applies for the other geometry-only change.
+   */
+  const updateRow = useCallback(
+    (token: ContentRowToken, update: ContentRowUpdate) => {
+      const record = rows.current.get(token);
+      if (!record) {
+        return;
+      }
+      if (update.messageId !== undefined && update.messageId !== record.messageId) {
+        unindexByMessage(record);
+        record.messageId = update.messageId;
+        indexByMessage(record);
+      }
+      if (update.debugKey !== undefined) {
+        record.debugKey = update.debugKey;
+      }
+      if (update.policy !== undefined && update.policy !== record.policy) {
+        applyPolicyChange(record, update.policy);
+      }
+      if (update.forceMounted !== undefined) {
+        record.forceMounted = update.forceMounted;
+      }
+      const sourceIdentityChanged =
+        update.identityFingerprint === undefined ||
+        record.identityFingerprint === undefined ||
+        update.identityFingerprint !== record.identityFingerprint;
+      if (update.identityFingerprint !== undefined) {
+        record.identityFingerprint = update.identityFingerprint;
+      }
+      if (update.fingerprint === undefined || update.fingerprint === record.fingerprint) {
+        return;
+      }
+      if (sourceIdentityChanged) {
+        startGeneration(record, update.fingerprint);
+        return;
+      }
+      record.fingerprint = update.fingerprint;
+      record.measuredFingerprint = update.fingerprint;
+      invalidateMeasurement(record);
+      remeasureRow(record);
+    },
+    [
+      applyPolicyChange,
+      indexByMessage,
+      invalidateMeasurement,
+      remeasureRow,
+      startGeneration,
+      unindexByMessage,
+    ],
   );
 
   /**

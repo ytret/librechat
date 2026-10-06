@@ -110,6 +110,27 @@ export function composeFingerprint(input: FingerprintInput): string {
   return parts.join('|');
 }
 
+/**
+ * The source half of the fingerprint: what is rendered, with the geometry state left out.
+ *
+ * `composeFingerprint` answers "is the previous measurement still valid"; this answers the
+ * narrower "is this still the same source". The provider needs both, because the two questions
+ * call for different remedies: a new source is re-keyed (§7.5) so React discards the old subtree,
+ * while the same source at a new size is re-measured in place. Conflating them re-mounted rows on
+ * every expansion, which unmounted the element carrying the `grid-template-rows` transition and
+ * destroyed the toggle's keyboard focus. `stateKey` is the part that belongs to
+ * `composeFingerprint` alone; `contentKey` is source identity and stays in both.
+ */
+export function composeIdentityFingerprint(
+  input: Pick<FingerprintInput, 'kind' | 'sourceKey' | 'contentKey'>,
+): string {
+  const parts: string[] = [input.kind, String(input.sourceKey)];
+  if (!isFingerprintEmpty(input.contentKey)) {
+    parts.push(String(input.contentKey));
+  }
+  return parts.join('|');
+}
+
 /** True when the source/state changed and any existing measurement is invalid. */
 export function fingerprintChanged(previous: string | undefined, next: string): boolean {
   return previous !== next;

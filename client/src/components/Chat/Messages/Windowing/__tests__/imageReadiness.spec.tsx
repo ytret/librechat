@@ -224,7 +224,13 @@ function Row({
         kind="image"
         sourceKey={0}
         ordinal={0}
-        stateKey={revision}
+        /**
+         * A changed source, which is what must force a new readiness report. `contentKey` and not
+         * `stateKey`: `stateKey` is geometry state that changes without changing the source
+         * (expansion, a streaming revision), and a row that changes only in geometry keeps its
+         * mounted element, so the previous readiness still describes it.
+         */
+        contentKey={String(revision)}
         policy={policy}
       >
         <FakeImage autoReady={autoReady} />

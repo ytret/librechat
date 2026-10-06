@@ -211,6 +211,13 @@ export type ContentRowRegistration = {
   kind: ContentRowKind;
   /** Determines whether a previous measurement still describes the rendered source. */
   fingerprint: string;
+  /**
+   * The source half of `fingerprint`, without geometry state. A change to this re-keys the row;
+   * a change to `fingerprint` alone means the same source at a new size and is re-measured in
+   * place. Omitted by callers that cannot distinguish the two, which keeps the conservative
+   * "any change is a new source" behaviour for them.
+   */
+  identityFingerprint?: string;
   policy: ContentRowPolicy;
   forceMounted: boolean;
   shellElement: HTMLElement;
@@ -233,7 +240,10 @@ export type MountedContentRegistration = {
  * `scopeToken`: a kind change is a new row (new token), not an update.
  */
 export type ContentRowUpdate = Partial<
-  Pick<ContentRowRegistration, 'messageId' | 'debugKey' | 'fingerprint' | 'policy' | 'forceMounted'>
+  Pick<
+    ContentRowRegistration,
+    'messageId' | 'debugKey' | 'fingerprint' | 'policy' | 'forceMounted' | 'identityFingerprint'
+  >
 >;
 
 export type ContentRowWindowingContextValue = {
@@ -317,6 +327,8 @@ export type ContentRowRecord = {
   debugKey: string;
   kind: ContentRowKind;
   fingerprint: string;
+  /** Source half of `fingerprint`; see `ContentRowRegistration.identityFingerprint`. */
+  identityFingerprint?: string;
   policy: ContentRowPolicy;
   shellElement: HTMLElement | null;
   measuredElement: HTMLElement | null;

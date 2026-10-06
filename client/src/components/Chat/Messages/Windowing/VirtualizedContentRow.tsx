@@ -5,6 +5,7 @@ import {
 } from './ContentRowWindowingContext';
 import {
   composeFingerprint,
+  composeIdentityFingerprint,
   createRowToken,
   createScopeToken,
   formatDebugKey,
@@ -138,6 +139,13 @@ function WindowedContentRow({
   }>({ mounted: true, generation: 1 });
 
   const fingerprint = composeFingerprint({ kind, sourceKey, stateKey, contentKey });
+  /**
+   * The same composition without `stateKey`, handed to the provider so it can tell a new source
+   * from the same source at a new size. Without it, expanding a row re-keys the subtree: the
+   * transition's element is unmounted, the toggle loses keyboard focus, and the animation pin is
+   * released before the transition can run.
+   */
+  const identityFingerprint = composeIdentityFingerprint({ kind, sourceKey, contentKey });
   const debugKey = formatDebugKey({ messageId, kind, ordinal });
 
   /**
@@ -230,10 +238,19 @@ function WindowedContentRow({
       messageId,
       debugKey,
       fingerprint,
+      identityFingerprint,
       policy: resolvedPolicy,
       forceMounted,
     });
-  }, [windowing, messageId, debugKey, fingerprint, resolvedPolicy, forceMounted]);
+  }, [
+    windowing,
+    messageId,
+    debugKey,
+    fingerprint,
+    identityFingerprint,
+    resolvedPolicy,
+    forceMounted,
+  ]);
 
   useEffect(() => {
     if (!pinReason) {

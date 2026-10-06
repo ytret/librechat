@@ -160,12 +160,41 @@ const scrollBy = (delta: number) => {
 
 const settle = () => flushFrames(CONTENT_ROW_QUIET_FRAMES + 2);
 
+/**
+ * Finish the expansion transition the way the browser does.
+ *
+ * jsdom runs no transitions, so the `transitionend` that releases the expansion pin never arrives
+ * on its own and the pin stays held. That matters here: a held pin stops the row from settling, so
+ * it can never become a placeholder, and this suite is about the placeholder cycle. It used to pass
+ * without this step because the row was remounted whenever the expansion state changed, and the
+ * pin's hook releases on unmount — the row unmounted mid-animation, which is the behaviour that was
+ * fixed. Dispatching the event is the primary release path the pin documents; the 400 ms fallback
+ * is for the case where no transition event ever arrives at all.
+ */
+const finishExpansionTransition = () => {
+  const element = document.querySelector('[role="group"], [role="region"]');
+  if (!element) {
+    return;
+  }
+  const event = new Event('transitionend', { bubbles: true });
+  Object.defineProperty(event, 'propertyName', { value: 'grid-template-rows' });
+  act(() => {
+    element.dispatchEvent(event);
+  });
+};
+
 /** Settle, then push the row out of range so it becomes a placeholder. */
 const scrollRowAway = (key: string) => {
   settle();
   farAbove(key);
   scrollBy(10);
   flushFrames(4);
+};
+
+/** As `scrollRowAway`, for a row whose expansion transition is still in flight here. */
+const scrollExpandedRowAway = (key: string) => {
+  finishExpansionTransition();
+  scrollRowAway(key);
 };
 
 /** Bring the row back into range and let it remount. */
@@ -283,7 +312,7 @@ describe('reasoning expansion across a real placeholder cycle', () => {
     fireEvent.click(toggleIn(key));
     expect(toggleIn(key).getAttribute('aria-expanded')).toBe('true');
 
-    scrollRowAway(key);
+    scrollExpandedRowAway(key);
     expect(isPlaceholder(key)).toBe(true);
     // The row's contents really are gone: this is the unmount the gate item is about.
     expect(rowShell(key)?.querySelector('button[aria-expanded]')).toBeNull();
@@ -305,7 +334,7 @@ describe('reasoning expansion across a real placeholder cycle', () => {
     fireEvent.click(toggleIn(key));
     expect(toggleIn(key).getAttribute('aria-expanded')).toBe('false');
 
-    scrollRowAway(key);
+    scrollExpandedRowAway(key);
     expect(isPlaceholder(key)).toBe(true);
     scrollRowBack(key);
 
@@ -321,7 +350,7 @@ describe('reasoning expansion across a real placeholder cycle', () => {
     expect(toggleIn(first).getAttribute('aria-expanded')).toBe('true');
     expect(toggleIn(second).getAttribute('aria-expanded')).toBe('false');
 
-    scrollRowAway(first);
+    scrollExpandedRowAway(first);
     scrollRowAway(second);
     expect(isPlaceholder(first)).toBe(true);
     expect(isPlaceholder(second)).toBe(true);
@@ -346,7 +375,7 @@ describe('summary expansion across a real placeholder cycle', () => {
     fireEvent.click(toggleIn(key));
     expect(toggleIn(key).getAttribute('aria-expanded')).toBe('true');
 
-    scrollRowAway(key);
+    scrollExpandedRowAway(key);
     expect(isPlaceholder(key)).toBe(true);
     expect(rowShell(key)?.querySelector('button[aria-expanded]')).toBeNull();
 
@@ -382,13 +411,14 @@ describe('repeated placeholder cycles', () => {
     fireEvent.click(toggleIn(key));
     expect(toggleIn(key).getAttribute('aria-expanded')).toBe('true');
 
-    scrollRowAway(key);
+    scrollExpandedRowAway(key);
     expect(isPlaceholder(key)).toBe(true);
     scrollRowBack(key);
     expect(toggleIn(key).getAttribute('aria-expanded')).toBe('true');
 
     // A second cycle: each remount is a new generation, so this checks that the owner's state is
     // what supplies the value rather than anything the first remount happened to leave behind.
+    // No transition is in flight here — this pass expands nothing, so no pin is held.
     scrollRowAway(key);
     expect(isPlaceholder(key)).toBe(true);
     scrollRowBack(key);
