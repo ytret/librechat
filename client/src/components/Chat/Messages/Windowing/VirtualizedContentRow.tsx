@@ -160,28 +160,48 @@ function WindowedContentRow({
   });
 
   /**
-   * Asynchronous-content readiness (§8.2, §6 Q3), recorded against the generation it was reported
-   * for. A row whose content reports ready becomes windowable; one that reports failure stays
-   * mounted. Storing the generation rather than a bare flag is what makes readiness reset by
+   * Asynchronous-content readiness (§8.2, §6 Q3), recorded against the generation whose subtree
+   * reported it. A row whose content reports ready becomes windowable; one that reports failure
+   * stays mounted. Storing the generation rather than a bare flag is what makes readiness reset by
    * itself on a remount, without an effect: the freshly mounted generation is `pending` until its
    * own content reports again — a cached image reports immediately, the current generation is
    * still measured from scratch.
+   *
+   * The reporters below close over the generation they were created for, and change identity with
+   * it. That is load-bearing, not incidental. The provider that hands these to content sits
+   * *outside* the element re-keyed on a generation change, so this component stays mounted and its
+   * `setReadiness` stays live while the content mounted in the earlier generation does not. A
+   * reporter captured before the change is therefore still callable afterwards; if it recorded
+   * whichever generation happened to be live at call time, it would approve a generation whose
+   * content has never reported, making the row windowable and letting the new content be replaced
+   * by a placeholder before it loaded. Measured: with the row on generation 2 and its content
+   * silent, a report from generation 1 turned it into a placeholder.
    */
-  const generationRef = useRef(state.generation);
-  generationRef.current = state.generation;
+  const generation = state.generation;
   const [readiness, setReadiness] = useState<{
     generation: number;
     status: 'ready' | 'failed';
   } | null>(null);
   const readinessStatus =
-    readiness != null && readiness.generation === state.generation ? readiness.status : 'pending';
+    readiness != null && readiness.generation === generation ? readiness.status : 'pending';
 
-  const reportReady = useCallback(() => {
-    setReadiness({ generation: generationRef.current, status: 'ready' });
-  }, []);
-  const reportFailed = useCallback(() => {
-    setReadiness({ generation: generationRef.current, status: 'failed' });
-  }, []);
+  const recordReadiness = useCallback(
+    (status: 'ready' | 'failed') => {
+      setReadiness((previous) => {
+        // A report for a superseded generation is discarded rather than "corrected": the caller
+        // observed content that is no longer mounted, so it says nothing about what is rendered
+        // now. Keeping the newer record also stops a late report from clearing the current
+        // generation's readiness, which would leave the row permanently unmeasured.
+        if (previous != null && previous.generation > generation) {
+          return previous;
+        }
+        return { generation, status };
+      });
+    },
+    [generation],
+  );
+  const reportReady = useCallback(() => recordReadiness('ready'), [recordReadiness]);
+  const reportFailed = useCallback(() => recordReadiness('failed'), [recordReadiness]);
 
   /**
    * The policy actually registered: an omitted or unrecognized value falls back to
