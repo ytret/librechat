@@ -3,6 +3,7 @@ import { ContentTypes } from 'librechat-data-provider';
 import type { TMessageContentParts } from 'librechat-data-provider';
 import { VirtualizedContentRow } from './VirtualizedContentRow';
 import { classifyContentRow } from './contentRowPolicy';
+import { contentRowContentKey } from './contentRowContent';
 
 /**
  * The row boundary for one message content part (spec §9.2, report 13 §6 Q1).
@@ -15,7 +16,9 @@ import { classifyContentRow } from './contentRowPolicy';
  *
  * `stateKey` is the expansion state for the kinds whose geometry changes with it: §12 requires
  * that state in the fingerprint, or a collapsed measurement would be reused for the expanded
- * source.
+ * source. `contentKey` is the other half of the same rule: the source key identifies *where* a part
+ * sits, not *what* it contains, so without it a long error replaced by a short one at the same
+ * index kept its fingerprint and its stale height (§14).
  */
 
 export type ContentPartRowProps = {
@@ -65,6 +68,15 @@ export function ContentPartRow({
       sourceKey={idx}
       ordinal={idx}
       stateKey={stateKey}
+      /**
+       * Withheld while the part is still being written. The key covers the growing text, so per
+       * delta it would change the fingerprint per delta, and a fingerprint change re-keys the row
+       * — a remount and a settlement attempt per token, which exhausts the attempt budget in three
+       * deltas and demotes the row for good. While streaming the row is force-mounted and its
+       * height comes from the resize observer, so nothing is lost by waiting; the key appears when
+       * the content is final.
+       */
+      contentKey={streaming ? undefined : contentRowContentKey(part)}
       policy={classification.policy}
       forceMounted={classification.forceMounted}
     >
