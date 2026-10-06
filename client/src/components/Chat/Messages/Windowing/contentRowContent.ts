@@ -11,12 +11,14 @@
  * This is the missing input: a stable string derived from what the row actually renders, so a
  * replaced source is a new source and gets measured again.
  *
- * **Derived from the renderers, not from the shape of the part.** The first version listed the
- * fields that came to mind and missed two that the renderers draw: `Content/Part.tsx` resolves an
- * error as `part.error ?? part.text ?? part.text?.value`, so an error with no `error` field still
- * renders text, and `Parts/Summary.tsx` draws a `provider/model · N tokens` line from the part. Both
- * omissions left a stale placeholder height. Every field below is one a renderer turns into visible
- * text; adding a field to a renderer without adding it here is the way this breaks again.
+ * **Derived from the renderers, not from the shape of the part.** Two reviews found the same class
+ * of mistake here: the key listing the fields that came to mind rather than the ones the renderers
+ * draw. `Content/Part.tsx` resolves both `string | TextData` forms of `think`, so reading only the
+ * string form treated the other as no content; it resolves an error as
+ * `part.error ?? part.text ?? part.text?.value`, so an error with no `error` field rendered text the
+ * key never saw; and `Parts/Summary.tsx` draws a `provider/model · N tokens` line from the part. Each
+ * omission left a stale placeholder height. Every field below is one a renderer turns into visible
+ * text, and adding a field to a renderer without adding it here is how this breaks again.
  *
  * **Streaming is the caller's decision, not this module's.** The key is derived from the whole
  * rendered text, which grows while a part streams; supplying it per delta would change the
@@ -79,20 +81,48 @@ function summaryMeta(part: TMessageContentParts): string {
 }
 
 /**
- * The text an error row renders. `Content/Part.tsx` resolves the same three fields in the same
- * order, so this mirrors the renderer rather than approximating it. `undefined` (not `''`) when
- * none of them is present: an error with no text has no content-derived height.
+ * Resolve a `string | TextData` part field the way `Content/Part.tsx` does.
+ *
+ * The shared type declares these fields as `string | TextData` (`TextData` is `{ value: string }`),
+ * and both production call sites in `Part.tsx` accept either form. A key that reads only the string
+ * form silently treats the other one as no content at all.
+ */
+function textData(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  const inner = (value as { value?: unknown } | undefined)?.value;
+  return typeof inner === 'string' ? inner : undefined;
+}
+
+/**
+ * The text a reasoning row renders. `Content/Parts/Reasoning.tsx` strips an enclosing `<think>` tag
+ * and trims before displaying, so the key applies the same normalisation: two raw strings that render
+ * the same text must not re-key the row, and anything that renders differently still does.
+ */
+function reasoningText(part: TMessageContentParts): string | undefined {
+  const text = textData((part as { think?: unknown }).think);
+  if (text === undefined) {
+    return undefined;
+  }
+  return text
+    .replace(/^<think>\s*/, '')
+    .replace(/\s*<\/think>$/, '')
+    .trim();
+}
+
+/**
+ * The text an error row renders. `Content/Part.tsx` resolves
+ * `part.error ?? part.text ?? part.text?.value` in that order, so this mirrors the renderer rather
+ * than approximating it. `undefined` (not `''`) when none is present: an error with no text has no
+ * content-derived height.
  */
 function errorText(part: TMessageContentParts): string | undefined {
   const fields = part as { error?: unknown; text?: unknown };
   if (typeof fields.error === 'string') {
     return fields.error;
   }
-  if (typeof fields.text === 'string') {
-    return fields.text;
-  }
-  const value = (fields.text as { value?: unknown } | undefined)?.value;
-  return typeof value === 'string' ? value : undefined;
+  return textData(fields.text);
 }
 
 function imageIdentity(part: TMessageContentParts): string {
@@ -121,14 +151,15 @@ export function contentRowContentKey(
   }
   switch (part.type) {
     case ContentTypes.THINK: {
-      const fields = part as { think?: unknown; thinkDuration?: unknown };
-      if (typeof fields.think !== 'string') {
+      const fields = part as { thinkDuration?: unknown };
+      const body = reasoningText(part);
+      if (body === undefined) {
         return undefined;
       }
       // The collapsed header reads "Thinking" or "Thought for N seconds", so the duration dresses
       // rendered text. Absent and `null` mean the same header, so they must mean the same key.
       const duration = fields.thinkDuration == null ? '' : String(fields.thinkDuration);
-      return hashContent(`${fields.think}\u0001${duration}`);
+      return hashContent(`${body}\u0001${duration}`);
     }
     case ContentTypes.SUMMARY: {
       const summarizing = (part as { summarizing?: unknown }).summarizing === true ? '1' : '0';

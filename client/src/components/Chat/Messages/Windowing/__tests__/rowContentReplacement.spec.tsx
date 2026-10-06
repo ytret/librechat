@@ -251,6 +251,17 @@ const errorPart = (error: string): TMessageContentParts =>
 const errorWithText = (text: string): TMessageContentParts =>
   ({ type: ContentTypes.ERROR, text }) as unknown as TMessageContentParts;
 
+/**
+ * A reasoning part in the `TextData` form. `Part.tsx` resolves
+ * `typeof part.think === 'string' ? part.think : part.think?.value`, so this renders normally.
+ */
+const thinkWithValue = (value: string): TMessageContentParts =>
+  ({
+    type: ContentTypes.THINK,
+    think: { value },
+    thinkDuration: 1200,
+  }) as unknown as TMessageContentParts;
+
 /** A summary whose body is fixed and whose metadata line is not: `Parts/Summary.tsx` draws both. */
 const summaryPart = (meta: {
   provider?: string;
@@ -300,6 +311,35 @@ describe('a row whose content is replaced at the same index', () => {
     );
     flushFrames(1);
     // The replacement is taller than what came before: 450px against the 300px measured above.
+    placeRow({ top: -5000, bottom: -4550 });
+    fireResize();
+    settle();
+    flushFrames(4);
+
+    expect(rowGeneration()).toBeGreaterThan(1);
+    expect(reservedHeight()).not.toBe(before);
+    expect(reservedHeight()).toBe(450);
+  });
+
+  it('re-measures when the reasoning text changes in the `{ value }` form the type allows', () => {
+    const { rerender } = renderTree([thinkWithValue('a short thought')]);
+
+    inView();
+    fireResize();
+    settle();
+    farAbove();
+    scrollBy(10);
+    flushFrames(4);
+    expect(isPlaceholder()).toBe(true);
+    const before = reservedHeight();
+
+    farAbove();
+    rerender(
+      <RecoilRoot>
+        <Harness content={[thinkWithValue('a considerably longer thought than before')]} />
+      </RecoilRoot>,
+    );
+    flushFrames(1);
     placeRow({ top: -5000, bottom: -4550 });
     fireResize();
     settle();

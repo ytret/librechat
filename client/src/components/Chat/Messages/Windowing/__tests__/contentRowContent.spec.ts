@@ -60,6 +60,40 @@ describe('contentRowContentKey covers the rendered fields', () => {
     );
   });
 
+  it('follows the reasoning fallback the renderer actually uses', () => {
+    // `Part.tsx` resolves `part.think` as `string | TextData` and `Reasoning` renders the result,
+    // so the `{ value }` form is a supported input, not a hypothetical one.
+    const body = (value: string) =>
+      ({ type: ContentTypes.THINK, think: { value } }) as unknown as TMessageContentParts;
+    expect(contentRowContentKey(body('first body'))).not.toBe(
+      contentRowContentKey(body('a different body entirely')),
+    );
+    expect(contentRowContentKey(body('same body'))).toBe(contentRowContentKey(body('same body')));
+
+    // Both forms render the same text, so both forms must produce the same key: otherwise
+    // switching between them would re-key a row for nothing.
+    const asString = (value: string) =>
+      ({ type: ContentTypes.THINK, think: value }) as unknown as TMessageContentParts;
+    expect(contentRowContentKey(body('identical text'))).toBe(
+      contentRowContentKey(asString('identical text')),
+    );
+  });
+
+  it('normalises the reasoning body the way the renderer does', () => {
+    // `Reasoning` strips an enclosing `<think>` tag and trims before displaying, so raw strings that
+    // render the same text must not re-key the row.
+    const body = (think: string) =>
+      ({ type: ContentTypes.THINK, think }) as unknown as TMessageContentParts;
+    expect(contentRowContentKey(body('<think>shown</think>'))).toBe(
+      contentRowContentKey(body('shown')),
+    );
+    expect(contentRowContentKey(body('  shown  '))).toBe(contentRowContentKey(body('shown')));
+    // and different displayed text still differs
+    expect(contentRowContentKey(body('<think>shown</think>'))).not.toBe(
+      contentRowContentKey(body('other')),
+    );
+  });
+
   it('includes the summary metadata line, which the renderer draws from the part', () => {
     const meta = (fields: { provider?: string; model?: string; tokenCount?: number }) =>
       ({
