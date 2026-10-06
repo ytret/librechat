@@ -8,6 +8,7 @@ import {
   resetContentRowWindowingEnabledForTests,
   setContentRowWindowingEnabled,
 } from '../contentRowFeatureFlag';
+import { CONTENT_ROW_QUIET_FRAMES } from '../contentRowTypes';
 import type { ContentRowWindowingRuntime } from '../contentRowTypes';
 import ContentParts from '../../Content/ContentParts';
 
@@ -179,6 +180,45 @@ const toggle = (group: 'reasoning' | 'summary') =>
 const expandingElement = (role: 'group' | 'region') =>
   document.querySelector(`[role="${role}"]`) as HTMLElement | null;
 
+/**
+ * Finish the expansion transition the way the browser does, then let the row settle.
+ *
+ * jsdom runs no transitions, so the `transitionend` that releases the expansion pin never arrives
+ * on its own. Completing it is what makes each toggle a *finished* expand/collapse rather than an
+ * interrupted one — which is the situation the budget below is being asked about.
+ */
+const finishTransition = () => {
+  const element = expandingElement('group') ?? expandingElement('region');
+  if (!element) {
+    return;
+  }
+  const event = new Event('transitionend', { bubbles: true });
+  Object.defineProperty(event, 'propertyName', { value: 'grid-template-rows' });
+  act(() => {
+    element.dispatchEvent(event);
+  });
+};
+
+const settle = () => flushFrames(CONTENT_ROW_QUIET_FRAMES + 2);
+
+/**
+ * Toggle a row `times` times, completing the transition and settling between each one.
+ *
+ * This is ordinary reading: a reader who expands a thought, reads it, collapses it, and does the
+ * same again a few times. Nothing here is uncontrolled resizing.
+ */
+const toggleCompleted = (group: 'reasoning' | 'summary', times: number) => {
+  for (let index = 0; index < times; index++) {
+    const button = toggle(group);
+    if (!button) {
+      throw new Error(`no ${group} toggle for pass ${index + 1}`);
+    }
+    fireEvent.click(button);
+    finishTransition();
+    settle();
+  }
+};
+
 describe('expanding a row under windowing', () => {
   it('keeps the row generation, so the animating element survives the expansion', () => {
     renderParts([think('a reasoning body', 1200)]);
@@ -224,5 +264,45 @@ describe('expanding a row under windowing', () => {
     expect(rowGeneration()).toBe('1');
     expect(expandingElement('region')).toBe(before);
     expect(document.activeElement).toBe(toggle('summary'));
+  });
+});
+
+/**
+ * Repeated expansion must not consume the settlement budget.
+ *
+ * `MAX_SETTLEMENT_ATTEMPTS` exists to bound *uncontrolled* resizing: a row that settles and then
+ * re-unsettles, forever, with no single budget ever elapsing. A deliberate expand/collapse is not
+ * that — the reader asked for it, and the row settles again afterwards. But the in-place re-measure
+ * this fix introduced routed through the same attempt counter, which is never cleared by settling,
+ * so ordinary use demoted the row to `always-mounted` and permanently switched windowing off for
+ * it. Measured before the fix: `alwaysMountedRows: 1`, reason `too-many-attempts`, `attempts: 4`
+ * after the third completed toggle (mount holds attempt 1).
+ */
+describe('repeated expansion does not exhaust the settlement budget', () => {
+  it('keeps a reasoning row windowable after four completed toggles', () => {
+    renderParts([think('a bounded reasoning body', 1200)]);
+
+    toggleCompleted('reasoning', 4);
+
+    const diagnostics = api.getDiagnostics();
+    expect(diagnostics.settlementTimeoutDetails).toEqual([]);
+    expect(diagnostics.settlementTimeouts).toBe(0);
+    expect(diagnostics.alwaysMountedRows).toBe(0);
+    // Windowing is still in force for this row, so the fix did not merely hide the demotion.
+    expect(diagnostics.oversizedRows).toBe(0);
+    expect(diagnostics.pinsByReason.animation).toBe(0);
+  });
+
+  it('keeps a summary row windowable after four completed toggles', () => {
+    renderParts([summary()]);
+
+    toggleCompleted('summary', 4);
+
+    const diagnostics = api.getDiagnostics();
+    expect(diagnostics.settlementTimeoutDetails).toEqual([]);
+    expect(diagnostics.settlementTimeouts).toBe(0);
+    expect(diagnostics.alwaysMountedRows).toBe(0);
+    expect(diagnostics.oversizedRows).toBe(0);
+    expect(diagnostics.pinsByReason.animation).toBe(0);
   });
 });

@@ -157,9 +157,11 @@ afterEach(() => {
   }
 });
 
-const ROW_KEY = 'm1:generic:0';
-
-const rowShell = () => document.querySelector(`[data-content-row-key="${ROW_KEY}"]`) as HTMLElement;
+/**
+ * The row key is `messageId:kind:ordinal`; these tests render exactly one row at a time, and the
+ * kind differs per content type, so the shell is found by its row attribute rather than by key.
+ */
+const rowShell = () => document.querySelector('[data-content-virtual-row="true"]') as HTMLElement;
 const isPlaceholder = () => rowShell()?.getAttribute('data-content-mounted') === 'false';
 const rowGeneration = () => Number(rowShell()?.getAttribute('data-content-generation'));
 /** The height a placeholder reserves, in px, as the inline style actually applies it. */
@@ -221,12 +223,6 @@ jest.mock('../../Content/Parts/useLazyHighlight', () => ({
   default: () => null,
 }));
 
-/* The renderer is replaced by a plain div: what matters is the row boundary and its geometry. */
-jest.mock('../../Content/Part', () => ({
-  __esModule: true,
-  default: ({ part }: { part: { error?: string } }) => <div>{part.error}</div>,
-}));
-
 function Harness({ content }: { content: Array<TMessageContentParts | undefined> }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   return (
@@ -246,6 +242,27 @@ function Harness({ content }: { content: Array<TMessageContentParts | undefined>
 
 const errorPart = (error: string): TMessageContentParts =>
   ({ type: ContentTypes.ERROR, error }) as unknown as TMessageContentParts;
+
+/**
+ * An error part with no `error` field. `Content/Part.tsx` renders
+ * `part.error ?? part.text ?? part.text?.value`, so this still shows text — the fallback the
+ * fingerprint originally ignored.
+ */
+const errorWithText = (text: string): TMessageContentParts =>
+  ({ type: ContentTypes.ERROR, text }) as unknown as TMessageContentParts;
+
+/** A summary whose body is fixed and whose metadata line is not: `Parts/Summary.tsx` draws both. */
+const summaryPart = (meta: {
+  provider?: string;
+  model?: string;
+  tokenCount?: number;
+}): TMessageContentParts =>
+  ({
+    type: ContentTypes.SUMMARY,
+    content: [{ type: ContentTypes.TEXT, text: 'unchanged summary body' }],
+    summarizing: false,
+    ...meta,
+  }) as unknown as TMessageContentParts;
 
 const renderTree = (content: Array<TMessageContentParts | undefined>) => {
   const result = render(
@@ -283,6 +300,74 @@ describe('a row whose content is replaced at the same index', () => {
     );
     flushFrames(1);
     // The replacement is taller than what came before: 450px against the 300px measured above.
+    placeRow({ top: -5000, bottom: -4550 });
+    fireResize();
+    settle();
+    flushFrames(4);
+
+    expect(rowGeneration()).toBeGreaterThan(1);
+    expect(reservedHeight()).not.toBe(before);
+    expect(reservedHeight()).toBe(450);
+  });
+
+  it('re-measures when the error text changes through the field the renderer falls back to', () => {
+    const { rerender } = renderTree([errorWithText('a short failure')]);
+
+    inView();
+    fireResize();
+    settle();
+    farAbove();
+    scrollBy(10);
+    flushFrames(4);
+    expect(isPlaceholder()).toBe(true);
+    const before = reservedHeight();
+
+    farAbove();
+    rerender(
+      <RecoilRoot>
+        <Harness content={[errorWithText('a considerably longer failure message')]} />
+      </RecoilRoot>,
+    );
+    flushFrames(1);
+    placeRow({ top: -5000, bottom: -4550 });
+    fireResize();
+    settle();
+    flushFrames(4);
+
+    expect(rowGeneration()).toBeGreaterThan(1);
+    expect(reservedHeight()).not.toBe(before);
+    expect(reservedHeight()).toBe(450);
+  });
+
+  it('re-measures when only the summary metadata changes, not its body', () => {
+    const { rerender } = renderTree([
+      summaryPart({ provider: 'openai', model: 'gpt-4o', tokenCount: 12 }),
+    ]);
+
+    inView();
+    fireResize();
+    settle();
+    farAbove();
+    scrollBy(10);
+    flushFrames(4);
+    expect(isPlaceholder()).toBe(true);
+    const before = reservedHeight();
+
+    farAbove();
+    rerender(
+      <RecoilRoot>
+        <Harness
+          content={[
+            summaryPart({
+              provider: 'anthropic',
+              model: 'claude-sonnet-4-5-20250929-with-a-long-name',
+              tokenCount: 987654,
+            }),
+          ]}
+        />
+      </RecoilRoot>,
+    );
+    flushFrames(1);
     placeRow({ top: -5000, bottom: -4550 });
     fireResize();
     settle();

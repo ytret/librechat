@@ -15,7 +15,7 @@
  */
 
 import { ContentTypes } from 'librechat-data-provider';
-import type { ContentRowKind, ContentRowPolicy } from './contentRowTypes';
+import type { ContentRowAttemptSource, ContentRowKind, ContentRowPolicy } from './contentRowTypes';
 import { LARGE_ROW_HEIGHT_PX } from './contentRowTypes';
 
 type ContentTypeRule = {
@@ -178,4 +178,21 @@ export function windowableContentRowKinds(): ReadonlySet<ContentRowKind> {
 /** A row taller than `LARGE_ROW_HEIGHT_PX` is never windowed for that generation (§6 Q1). */
 export function isOversizedRowHeight(height: number): boolean {
   return height > LARGE_ROW_HEIGHT_PX;
+}
+
+/**
+ * Whether arming settlement for this reason spends one of the row's `MAX_SETTLEMENT_ATTEMPTS`.
+ *
+ * The budget answers one question: is this row re-unsettling on its own, forever, so that no single
+ * settlement budget ever elapses? Only uncontrolled geometry changes are evidence of that. A
+ * `geometry-state` change is the opposite — the reader expanded or collapsed the row, so the new
+ * height is expected and the row settles again immediately afterwards.
+ *
+ * Charging those exhausted the budget in ordinary use: three completed expand/collapse cycles
+ * demoted the row to `always-mounted` and switched windowing off for it for the rest of the
+ * conversation. The change still arms a settlement cycle; it just does not count against the
+ * instability budget, and the per-row timeout still demotes a row whose transition never completes.
+ */
+export function countsTowardInstabilityBudget(source: ContentRowAttemptSource): boolean {
+  return source !== 'geometry-state';
 }

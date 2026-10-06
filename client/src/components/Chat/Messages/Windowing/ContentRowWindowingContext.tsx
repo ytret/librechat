@@ -31,7 +31,7 @@ import {
   type ContentRowVisibilitySampler,
 } from './contentRowDiagnostics';
 import { classifyMeasurement, computeLayoutBucket, nextGeneration } from './contentRowIdentity';
-import { isOversizedRowHeight } from './contentRowPolicy';
+import { countsTowardInstabilityBudget, isOversizedRowHeight } from './contentRowPolicy';
 import type {
   ContentRowAttemptSource,
   ContentRowDemotionReason,
@@ -485,7 +485,15 @@ export function ContentRowWindowingProvider({
         return;
       }
       const now = performanceNow();
-      record.settlementAttempts += 1;
+      // A deliberate geometry-state change (the reader expanding a row) still arms a settlement
+      // cycle, but it must not spend an instability attempt: the budget bounds uncontrolled
+      // resizing, and ordinary use would otherwise demote the row permanently. See
+      // `countsTowardInstabilityBudget`.
+      if (countsTowardInstabilityBudget(source)) {
+        record.settlementAttempts += 1;
+      }
+      // Every arm is recorded, counted or not, so the diagnostics stay a truthful account of why
+      // the provider was scheduled rather than only of what the budget saw.
       diagnostics.current.recordSettlementAttempt(source);
       if (record.settlementAttempts === 1) {
         record.settlementStartedAt = now;
@@ -1148,9 +1156,13 @@ export function ContentRowWindowingProvider({
    * Drop the measurement in hand without touching mount state. §13's opening rule:
    * an invalid measurement must never survive as a placeholder height, and §12
    * rule 6 rejects any in-flight measurement captured under the old fingerprint.
+   *
+   * `source` names why. A changed geometry state on an unchanged source (the reader expanding a
+   * row) passes `'geometry-state'`, which arms a settlement cycle without spending an instability
+   * attempt — the reader asked for the new height, so it is not evidence of instability.
    */
   const invalidateMeasurement = useCallback(
-    (record: ContentRowRecord) => {
+    (record: ContentRowRecord, source: ContentRowAttemptSource = 'invalidate') => {
       // The height is dropped, but the element and the fingerprint capture are kept: the
       // source is still the same one, only its geometry is suspect. Keeping the capture is
       // what lets the mounted element be re-measured immediately instead of waiting for a
@@ -1159,7 +1171,7 @@ export function ContentRowWindowingProvider({
       record.settled = false;
       record.mountState = 'MOUNTED_UNMEASURED';
       pendingSettlements.current.delete(record.token);
-      beginMeasurementWork(record, 'invalidate');
+      beginMeasurementWork(record, source);
     },
     [beginMeasurementWork],
   );
@@ -1426,7 +1438,10 @@ export function ContentRowWindowingProvider({
       }
       record.fingerprint = update.fingerprint;
       record.measuredFingerprint = update.fingerprint;
-      invalidateMeasurement(record);
+      // The source is unchanged and only its geometry state moved — the reader toggled this row.
+      // The stale height still has to go and the mounted element still has to be re-measured in
+      // place, but the settlement budget must not be charged for it.
+      invalidateMeasurement(record, 'geometry-state');
       remeasureRow(record);
     },
     [

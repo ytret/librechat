@@ -415,6 +415,13 @@ export type ContentRowAttemptSource =
   | 'rearm'
   | 'invalidate'
   | 'generation'
+  /**
+   * A deliberate geometry-state change on a row that kept its identity: today, the reader
+   * expanding or collapsing a reasoning or summary row. Its height must be re-measured, but it is
+   * not the uncontrolled resizing the instability budget exists to bound, so it does not spend an
+   * attempt (see `countsTowardInstabilityBudget`).
+   */
+  | 'geometry-state'
   /** §6 Q3 — a row entering `windowed` from `unstable-until-settled` arms its own budget. */
   | 'policy';
 
