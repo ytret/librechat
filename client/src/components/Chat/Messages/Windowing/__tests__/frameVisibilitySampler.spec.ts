@@ -286,6 +286,58 @@ describe('summarizeFrameVisibility', () => {
     );
   });
 
+  /**
+   * The instrument check the hard-fling gate rests on (report 13 §15.5 finding 4). `coverage` is 1
+   * whenever the strip held no row shells, so a run that never touched a row reports a perfect
+   * `min` while having measured nothing. The counts have to say which of the two happened.
+   */
+  it('counts the probes that landed on a row, so a perfect run can be told from an empty one', () => {
+    const onRows = summarizeFrameVisibility([reading(0, 'raf'), reading(1, 'raf')]);
+    const raf = onRows.channels.find((entry) => entry.phase === 'raf');
+    expect(raf?.bandPoints).toBe(FRAME_VISIBILITY_PROBE_POINTS * 2);
+    expect(raf?.contentPoints).toBe(FRAME_VISIBILITY_PROBE_POINTS * 2);
+    expect(raf?.framesOnRows).toBe(2);
+
+    const printed = formatFrameVisibilitySummary(onRows).join('\n');
+    expect(printed).toContain('probes= ' + FRAME_VISIBILITY_PROBE_POINTS * 2);
+    expect(printed).not.toContain('NOTHING MEASURED');
+  });
+
+  it('says so when a run never touched a row, however perfect its coverage looks', () => {
+    // The flag-off case, and the shape the fling run had: no row shells under the probe.
+    const noRows = summarizeFrameVisibility([
+      reading(0, 'raf', {
+        contentPoints: 0,
+        placeholderPoints: 0,
+        bandPoints: 0,
+        coverage: 1,
+      }),
+      reading(1, 'raf', {
+        contentPoints: 0,
+        placeholderPoints: 0,
+        bandPoints: 0,
+        coverage: 1,
+      }),
+    ]);
+    const raf = noRows.channels.find((entry) => entry.phase === 'raf');
+    expect(raf?.coverageMin).toBe(1);
+    expect(raf?.bandPoints).toBe(0);
+    expect(raf?.framesOnRows).toBe(0);
+
+    const printed = formatFrameVisibilitySummary(noRows).join('\n');
+    expect(printed).toContain('probes= 0');
+    expect(printed).toContain('NOTHING MEASURED');
+  });
+
+  it('counts placeholders as probes on a row, so a blank strip is still a measurement', () => {
+    const summary = summarizeFrameVisibility([blank(0, 'raf'), blank(1, 'raf')]);
+    const raf = summary.channels.find((entry) => entry.phase === 'raf');
+    expect(raf?.bandPoints).toBeGreaterThan(0);
+    expect(raf?.framesOnRows).toBe(2);
+    expect(raf?.contentPoints).toBe(0);
+    expect(formatFrameVisibilitySummary(summary).join('\n')).not.toContain('NOTHING MEASURED');
+  });
+
   it('counts only frames that arrived at a new offset', () => {
     const summary = summarizeFrameVisibility([
       reading(0, 'raf', { scrollTop: 0 }),

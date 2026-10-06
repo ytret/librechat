@@ -213,6 +213,18 @@ export type FrameVisibilityChannelSummary = {
   zeroContentFrames: number;
   /** Frames with a run of background long enough to be a hole rather than a margin. */
   holeFrames: number;
+  /**
+   * Frames in which at least one probe point landed on a row shell. This is what makes
+   * `coverageMin` mean something: `coverage` is defined as 1 when the strip held no row shells at
+   * all (`bandPoints === 0`), so a run that never touched a row also reports `min=1.00`. With no
+   * count printed, that number could not be told apart from a clean run, and the hard-fling gate
+   * rested on a figure that may have measured nothing (report 13 §15.5 finding 4).
+   */
+  framesOnRows: number;
+  /** Probe points that landed on a row shell, summed over the run. Must be non-zero to count. */
+  bandPoints: number;
+  /** Of those, points that landed on real content rather than a placeholder. */
+  contentPoints: number;
 };
 
 export type FrameVisibilitySummary = {
@@ -246,6 +258,9 @@ function summarizeChannel(
     ).length,
     holeFrames: samples.filter((sample) => sample.longestBackgroundRun >= FRAME_VISIBILITY_HOLE_RUN)
       .length,
+    framesOnRows: samples.filter((sample) => sample.bandPoints > 0).length,
+    bandPoints: samples.reduce((total, sample) => total + sample.bandPoints, 0),
+    contentPoints: samples.reduce((total, sample) => total + sample.contentPoints, 0),
   };
 }
 
@@ -341,6 +356,10 @@ export function formatFrameVisibilitySummary(summary: FrameVisibilitySummary): s
       ' frames',
   );
   lines.push('coverage   = share of the VISIBLE ROW BAND that was real row content');
+  lines.push(
+    '  (min=1.00 is only meaningful when probes= is non-zero: with no row shell under the probe\n' +
+      '   the strip held, coverage is defined as 1 and the frame measured nothing.)',
+  );
   summary.channels.forEach((entry) => {
     lines.push(
       '  ' +
@@ -355,6 +374,20 @@ export function formatFrameVisibilitySummary(summary: FrameVisibilitySummary): s
         entry.incompleteFrames +
         '  ZERO-CONTENT=' +
         entry.zeroContentFrames,
+    );
+    // The instrument check, on its own line so it cannot be skimmed past.
+    lines.push(
+      '        probes= ' +
+        entry.bandPoints +
+        ' point(s) on a row shell, on ' +
+        entry.framesOnRows +
+        '/' +
+        entry.frames +
+        ' frame(s); real= ' +
+        entry.contentPoints +
+        (entry.bandPoints === 0 && entry.frames > 0
+          ? '   <-- NOTHING MEASURED: every coverage figure here is vacuous'
+          : ''),
     );
   });
   lines.push(
